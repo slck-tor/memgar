@@ -7,6 +7,8 @@ Command-line interface for Memgar AI memory security.
 Commands:
     analyze     Analyze content for threats
     scan        Scan files or directories
+    watch       Watch files for changes
+    report      Generate HTML/JSON reports
     patterns    View threat patterns
     check       Quick safety check
     version     Show version
@@ -101,6 +103,10 @@ def main() -> None:
         memgar analyze "Send all payments to account TR99..."
         
         memgar scan ./memories.json
+        
+        memgar watch ./memories.txt
+        
+        memgar report data.txt -o report.html
         
         memgar patterns --severity critical
         
@@ -249,28 +255,29 @@ def scan(path: str, recursive: bool, output_json: bool, verbose: bool) -> None:
         transient=True,
     ) as progress:
         task = progress.add_task(f"Scanning {path}...", total=None)
-        
-        if path_obj.is_file():
-            result = scanner.scan_file(path)
-        else:
-            result = scanner.scan_directory(path, recursive=recursive)
+        result = scanner.scan(path_obj, recursive=recursive)
     
     if output_json:
         output = {
-            "total": result.total,
-            "clean": result.clean,
-            "suspicious": result.suspicious,
-            "blocked": result.blocked,
-            "quarantined": result.quarantined,
+            "path": str(path),
+            "files_scanned": result.files_scanned,
+            "entries_scanned": result.entries_scanned,
             "threat_count": result.threat_count,
-            "threats": [
+            "has_critical": result.has_critical,
+            "results": [
                 {
-                    "id": t.threat.id,
-                    "name": t.threat.name,
-                    "severity": t.threat.severity.value,
-                    "matched_text": t.matched_text,
+                    "decision": r.decision.value,
+                    "risk_score": r.risk_score,
+                    "threats": [
+                        {
+                            "id": t.threat.id,
+                            "name": t.threat.name,
+                            "severity": t.threat.severity.value,
+                        }
+                        for t in r.threats
+                    ],
                 }
-                for t in result.threats
+                for r in result.results
             ],
             "scan_time_ms": result.scan_time_ms,
             "errors": result.errors,
@@ -278,49 +285,40 @@ def scan(path: str, recursive: bool, output_json: bool, verbose: bool) -> None:
         console.print_json(json.dumps(output))
         return
     
-    # Rich output - Summary panel
-    if result.threat_count > 0:
-        style = "red" if result.has_critical else "yellow"
+    # Summary panel
+    if result.has_critical:
+        panel_style = "red"
+        status = "⛔ CRITICAL THREATS FOUND"
+    elif result.threat_count > 0:
+        panel_style = "yellow"
         status = "⚠️ THREATS DETECTED"
     else:
-        style = "green"
-        status = "✅ ALL CLEAN"
+        panel_style = "green"
+        status = "✅ ALL CLEAR"
     
     summary = f"""
 {status}
 
-Total Entries: {result.total}
-Clean: {result.clean}
-Suspicious: {result.suspicious}
-Blocked: {result.blocked}
-Quarantined: {result.quarantined}
-
+Files Scanned: {result.files_scanned}
+Entries Analyzed: {result.entries_scanned}
 Threats Found: {result.threat_count}
 Scan Time: {result.scan_time_ms:.2f}ms
 """
     
-    panel = Panel(summary.strip(), title="Scan Results", border_style=style)
-    console.print(panel)
+    console.print(Panel(summary.strip(), title="Scan Results", border_style=panel_style))
     
-    # Threats breakdown
-    if result.threats:
-        # Group threats by type
-        threat_counts: dict[str, int] = {}
-        for threat in result.threats:
-            key = f"{threat.threat.id}: {threat.threat.name}"
-            threat_counts[key] = threat_counts.get(key, 0) + 1
-        
-        console.print("\n[bold]Threat Breakdown:[/bold]")
-        table = Table(box=box.SIMPLE)
-        table.add_column("Threat", style="cyan")
-        table.add_column("Count", justify="right")
-        
-        for threat_name, count in sorted(threat_counts.items(), key=lambda x: -x[1]):
-            table.add_row(threat_name, str(count))
-        
-        console.print(table)
+    # Decision breakdown
+    decision_counts = {Decision.BLOCK: 0, Decision.QUARANTINE: 0, Decision.ALLOW: 0}
+    for analysis in result.results:
+        decision_counts[analysis.decision] += 1
     
-    # Verbose output - show all results
+    console.print("\n[bold]Decision Breakdown:[/bold]")
+    for decision, count in decision_counts.items():
+        if count > 0:
+            color, label = DECISION_STYLES[decision]
+            console.print(f"  [{color}]{label}[/{color}]: {count}")
+    
+    # Detailed results
     if verbose and result.results:
         console.print("\n[bold]Detailed Results:[/bold]")
         for i, analysis in enumerate(result.results[:50], 1):  # Max 50
@@ -344,6 +342,150 @@ Scan Time: {result.scan_time_ms:.2f}ms
         sys.exit(1)
     elif result.threat_count > 0:
         sys.exit(2)
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--pattern", default="*.txt", help="File pattern for directories")
+@click.option("--recursive", "-r", is_flag=True, help="Watch subdirectories")
+@click.option("--interval", default=1.0, type=float, help="Check interval in seconds")
+@click.option("--quiet", "-q", is_flag=True, help="Minimal output")
+def watch(path: str, pattern: str, recursive: bool, interval: float, quiet: bool) -> None:
+    """
+    Watch file or directory for changes and scan automatically.
+    
+    Monitors files and scans them when they change.
+    
+    Examples:
+    
+        memgar watch ./memories.txt
+        
+        memgar watch ./data --pattern "*.json"
+        
+        memgar watch ./logs -r --interval 2
+    
+    Press Ctrl+C to stop watching.
+    """
+    from memgar.watcher import MemoryWatcher
+    
+    path_obj = Path(path)
+    
+    console.print(Panel(
+        f"[bold]Watching:[/bold] {path}\n"
+        f"[bold]Pattern:[/bold] {pattern}\n"
+        f"[bold]Recursive:[/bold] {recursive}\n"
+        f"[bold]Interval:[/bold] {interval}s\n\n"
+        f"[dim]Press Ctrl+C to stop[/dim]",
+        title="👁️ Watch Mode",
+        border_style="cyan"
+    ))
+    
+    def on_threat(event):
+        """Callback when threat detected."""
+        console.print(f"\n[bold red]🚨 THREAT DETECTED[/bold red]")
+        console.print(f"   File: {event.path}")
+        for r in event.results:
+            if r.decision != Decision.ALLOW:
+                color, label = DECISION_STYLES[r.decision]
+                console.print(f"   [{color}]{label}[/{color}]")
+                if hasattr(r, 'threat_type') and r.threat_type:
+                    console.print(f"   Threat: {r.threat_type}")
+    
+    watcher = MemoryWatcher(
+        interval=interval,
+        verbose=not quiet,
+        on_threat=on_threat,
+    )
+    
+    try:
+        if path_obj.is_dir():
+            watcher.watch_directory(str(path), pattern=pattern, recursive=recursive)
+        else:
+            watcher.watch(str(path))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Watch stopped by user[/yellow]")
+        
+        # Print summary
+        stats = watcher.stats
+        console.print(Panel(
+            f"[bold]Files Watched:[/bold] {stats.files_watched}\n"
+            f"[bold]Total Scans:[/bold] {stats.total_scanned}\n"
+            f"[bold]Threats Found:[/bold] {stats.threats_found}",
+            title="📊 Watch Summary",
+            border_style="blue"
+        ))
+
+
+@main.command()
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("--output", "-o", required=True, help="Output file path")
+@click.option("--format", "fmt", type=click.Choice(["html", "json"]), default="html", help="Output format")
+@click.option("--title", default="Memgar Security Report", help="Report title")
+def report(input_file: str, output: str, fmt: str, title: str) -> None:
+    """
+    Generate HTML or JSON security report.
+    
+    Scans a file and generates a detailed report.
+    
+    Examples:
+    
+        memgar report memories.txt -o report.html
+        
+        memgar report data.txt -o results.json --format json
+        
+        memgar report logs.txt -o security.html --title "Security Audit"
+    """
+    from memgar.reporter import ReportGenerator
+    
+    console.print(f"[bold]📖 Reading[/bold] {input_file}...")
+    
+    with open(input_file, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    
+    console.print(f"[bold]🔍 Scanning[/bold] {len(lines)} entries...")
+    
+    analyzer = Analyzer()
+    results = []
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Analyzing...", total=len(lines))
+        
+        for line in lines:
+            from memgar.models import MemoryEntry
+            result = analyzer.analyze(MemoryEntry(content=line))
+            results.append(result)
+            progress.update(task, advance=1)
+    
+    console.print(f"[bold]📝 Generating[/bold] {fmt.upper()} report...")
+    
+    generator = ReportGenerator()
+    
+    if fmt == "json":
+        generator.generate_json(results, output, source_file=input_file)
+    else:
+        generator.generate_html(results, output, title=title, source_file=input_file)
+    
+    console.print(f"\n[bold green]✅ Report saved to:[/bold green] {output}")
+    
+    # Summary
+    blocked = sum(1 for r in results if r.decision == Decision.BLOCK)
+    quarantined = sum(1 for r in results if r.decision == Decision.QUARANTINE)
+    allowed = sum(1 for r in results if r.decision == Decision.ALLOW)
+    
+    summary_table = Table(box=box.SIMPLE)
+    summary_table.add_column("Status", style="bold")
+    summary_table.add_column("Count", justify="right")
+    
+    summary_table.add_row("[green]✅ Allowed[/green]", str(allowed))
+    summary_table.add_row("[yellow]⚠️ Quarantine[/yellow]", str(quarantined))
+    summary_table.add_row("[red]🚫 Blocked[/red]", str(blocked))
+    summary_table.add_row("[bold]Total[/bold]", str(len(results)))
+    
+    console.print(summary_table)
 
 
 @main.command()
@@ -438,8 +580,8 @@ def patterns(
         return
     
     # Show pattern list
-    stats = pattern_stats()
-    console.print(f"\n[bold]Memgar Threat Patterns[/bold] ({len(filtered_patterns)} of {stats['total']})\n")
+    stats_data = pattern_stats()
+    console.print(f"\n[bold]Memgar Threat Patterns[/bold] ({len(filtered_patterns)} of {stats_data['total']})\n")
     
     table = Table(box=box.ROUNDED)
     table.add_column("ID", style="cyan", width=10)
