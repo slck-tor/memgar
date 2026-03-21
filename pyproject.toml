@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "memgar"
-version = "0.1.0"
+version = "0.3.0"
 description = "AI Agent Memory Security - Protect against memory poisoning attacks"
 readme = "README.md"
 license = "MIT"
@@ -14,7 +14,9 @@ authors = [
 ]
 keywords = [
     "ai", "security", "llm", "memory", "prompt-injection",
-    "agent", "langchain", "claude", "gpt", "mcp", "poisoning"
+    "agent", "langchain", "crewai", "autogen", "claude", "gpt", 
+    "mcp", "poisoning", "rag", "retrieval", "trust", "provenance",
+    "owasp", "asi06", "memory-poisoning", "llamaindex", "openai"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -25,8 +27,10 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -35,23 +39,75 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Development tools
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+
+# Semantic analysis with embeddings (Layer 1 enhanced)
+semantic = [
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.21.0",
+]
+
+# LLM API support for semantic analysis
+llm = [
+    "anthropic>=0.18.0",
+    "openai>=1.0.0",
+]
+
+# Cloud/API features
 cloud = [
     "anthropic>=0.18.0",
+    "openai>=1.0.0",
     "httpx>=0.25.0",
 ]
+
+# LangChain integration (agent + RAG)
 langchain = [
     "langchain>=0.1.0",
     "langchain-core>=0.1.0",
+    "langchain-community>=0.0.10",
 ]
+
+# LlamaIndex integration (RAG)
+llamaindex = [
+    "llama-index>=0.10.0",
+]
+
+# CrewAI integration
+crewai = [
+    "crewai>=0.1.0",
+]
+
+# AutoGen integration
+autogen = [
+    "pyautogen>=0.2.0",
+]
+
+# File watching (real-time monitoring)
+watch = [
+    "watchdog>=3.0.0",
+]
+
+# All agent framework integrations
+agents = [
+    "memgar[langchain,crewai,autogen]",
+]
+
+# All RAG integrations
+rag = [
+    "memgar[langchain,llamaindex]",
+]
+
+# Full installation (everything)
 all = [
-    "memgar[dev,cloud,langchain]",
+    "memgar[dev,semantic,llm,cloud,langchain,llamaindex,crewai,autogen,watch]",
 ]
 
 [project.scripts]
@@ -60,28 +116,54 @@ memgar = "memgar.cli:main"
 [project.urls]
 Homepage = "https://memgar.io"
 Documentation = "https://docs.memgar.io"
-Repository = "https://github.com/memgar/memgar"
-Issues = "https://github.com/memgar/memgar/issues"
+Repository = "https://github.com/slck-tor/memgar"
+Issues = "https://github.com/slck-tor/memgar/issues"
+Changelog = "https://github.com/slck-tor/memgar/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["memgar"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/memgar",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
+
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py39", "py310", "py311", "py312", "py313"]
 
 [tool.ruff]
 line-length = 100
 select = ["E", "F", "I", "N", "W", "B", "Q"]
 ignore = ["E501"]
 
+[tool.ruff.isort]
+known-first-party = ["memgar"]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["memgar"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
