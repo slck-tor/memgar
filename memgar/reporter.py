@@ -539,3 +539,5 @@ def generate_report(
         return generator.generate_json(results, output_path, **kwargs)
     else:
         return generator.generate_html(results, output_path, **kwargs)
+    # Backward compatibility alias
+    HTMLReporter = ReportGenerator
