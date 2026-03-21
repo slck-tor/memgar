@@ -110,6 +110,28 @@ from memgar.retriever import (
 # =============================================================================
 from memgar.reporter import HTMLReporter
 from memgar.watcher import MemoryWatcher
+# =============================================================================
+# CIRCUIT BREAKER (Always available)
+# =============================================================================
+from memgar.circuit_breaker import (
+    CircuitBreaker,
+    CircuitState,
+    ThreatEvent,
+    CircuitBreakerStats,
+    AgentHaltedException,
+    MultiCircuitBreaker,
+)
+
+# =============================================================================
+# MEMORY AUDITOR (Always available)
+# =============================================================================
+from memgar.auditor import (
+    MemoryAuditor,
+    AuditEventType,
+    AuditEvent,
+    Snapshot,
+    IntegrityReport,
+)
 
 # =============================================================================
 # SEMANTIC ANALYSIS (Optional - requires sentence-transformers)
