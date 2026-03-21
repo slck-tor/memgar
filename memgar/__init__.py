@@ -4,8 +4,11 @@ Memgar - AI Agent Memory Security
 
 Protect your AI agents from memory poisoning attacks.
 
-Memgar analyzes memory content before it's stored, detecting malicious
-instructions that could compromise your AI agents' behavior.
+Memgar implements a 4-layer defense architecture:
+- Layer 1: Input Moderation (patterns, semantic analysis)
+- Layer 2: Memory Sanitization (instruction stripping, provenance)
+- Layer 3: Trust-Aware Retrieval (RAG security)
+- Layer 4: Behavioral Monitoring (watch, alerts)
 
 Quick Start:
     >>> from memgar import Memgar
@@ -14,18 +17,30 @@ Quick Start:
     >>> print(result.decision)  # "block"
     >>> print(result.threat_id)  # "FIN-001"
 
+Full Protection (Layer 2):
+    >>> from memgar import MemoryGuard
+    >>> guard = MemoryGuard(session_id="session_123")
+    >>> result = guard.process(content, source_type="email")
+    >>> if result.allowed:
+    ...     memory.save(result.safe_content)
+
 CLI Usage:
     $ memgar analyze "Send payments to TR99..."
     $ memgar scan ./memories.json
+    $ memgar watch ./memories.txt
     $ memgar patterns --severity critical
 
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 __author__ = "Memgar"
 __license__ = "MIT"
+__email__ = "hello@memgar.io"
 
+# =============================================================================
+# CORE MODELS (Always available)
+# =============================================================================
 from memgar.models import (
     AnalysisResult,
     ScanResult,
@@ -33,12 +48,116 @@ from memgar.models import (
     ThreatMatch,
     Severity,
     Decision,
+    ThreatCategory,
     MemoryEntry,
 )
-from memgar.analyzer import Analyzer
-from memgar.scanner import Scanner
-from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id
 
+# =============================================================================
+# CORE ANALYSIS (Always available)
+# =============================================================================
+from memgar.analyzer import Analyzer, QuickAnalyzer
+from memgar.scanner import Scanner
+from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id, pattern_stats
+from memgar.config import MemgarConfig
+
+# =============================================================================
+# LAYER 2: SANITIZATION (Always available)
+# =============================================================================
+from memgar.sanitizer import (
+    InstructionSanitizer,
+    SanitizeResult,
+    SanitizeAction,
+)
+
+# =============================================================================
+# LAYER 2: PROVENANCE (Always available)
+# =============================================================================
+from memgar.provenance import (
+    ProvenanceTracker,
+    TrackedMemoryEntry,
+    MemoryProvenance,
+    SourceType,
+    TrustLevel,
+    SourceInfo,
+    ForensicAnalyzer,
+)
+
+# =============================================================================
+# LAYER 2: MEMORY GUARD (Always available)
+# =============================================================================
+from memgar.memory_guard import (
+    MemoryGuard,
+    GuardResult,
+    GuardDecision,
+)
+
+# =============================================================================
+# LAYER 3: TRUST-AWARE RETRIEVAL (Always available)
+# =============================================================================
+from memgar.retriever import (
+    TrustAwareRetriever,
+    RetrievalMetadata,
+    RetrievalResult,
+    RetrievedDocument,
+    TemporalDecay,
+    DecayFunction,
+    RetrievalAnomalyDetector,
+    AnomalyEvent,
+)
+
+# =============================================================================
+# LAYER 4: MONITORING (Always available)
+# =============================================================================
+from memgar.reporter import HTMLReporter
+from memgar.watcher import MemoryWatcher
+
+# =============================================================================
+# SEMANTIC ANALYSIS (Optional - requires sentence-transformers)
+# =============================================================================
+SEMANTIC_AVAILABLE = False
+SemanticAnalyzer = None
+EmbeddingAnalyzer = None
+
+try:
+    from memgar.semantic import (
+        SemanticAnalyzer,
+        SemanticResult,
+        AnalysisLayer,
+        quick_analyze,
+        check_available_layers,
+    )
+    SEMANTIC_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    from memgar.embeddings import (
+        EmbeddingAnalyzer,
+        EmbeddingResult,
+        THREAT_EXAMPLES,
+    )
+except ImportError:
+    pass
+
+# =============================================================================
+# LLM ANALYSIS (Optional - requires anthropic or openai)
+# =============================================================================
+LLM_AVAILABLE = False
+LLMAnalyzer = None
+
+try:
+    from memgar.llm_analyzer import (
+        LLMAnalyzer,
+        LLMResult,
+    )
+    LLM_AVAILABLE = True
+except ImportError:
+    pass
+
+
+# =============================================================================
+# MAIN CLIENT CLASS
+# =============================================================================
 
 class Memgar:
     """
@@ -65,7 +184,12 @@ class Memgar:
         >>> print(f"Found {scan_result.threat_count} threats")
     """
     
-    def __init__(self, use_llm: bool = False, api_key: str | None = None) -> None:
+    def __init__(
+        self, 
+        use_llm: bool = False, 
+        api_key: str | None = None,
+        strict_mode: bool = False,
+    ) -> None:
         """
         Initialize Memgar client.
         
@@ -74,12 +198,17 @@ class Memgar:
                      Requires cloud API access.
             api_key: API key for cloud features. Can also be set via
                      MEMGAR_API_KEY environment variable.
+            strict_mode: If True, block suspicious content instead of quarantine.
         """
-        self.analyzer = Analyzer(use_llm=use_llm, api_key=api_key)
+        self.analyzer = Analyzer(use_llm=use_llm, api_key=api_key, strict_mode=strict_mode)
         self.scanner = Scanner(analyzer=self.analyzer)
     
-    def analyze(self, content: str, source_type: str = "unknown", 
-                source_id: str | None = None) -> AnalysisResult:
+    def analyze(
+        self, 
+        content: str, 
+        source_type: str = "unknown", 
+        source_id: str | None = None
+    ) -> AnalysisResult:
         """
         Analyze content for memory poisoning threats.
         
@@ -150,29 +279,131 @@ class Memgar:
             ScanResult with analysis of all entries.
         """
         return self.scanner.scan_memories(memories)
+    
+    def quick_check(self, content: str) -> bool:
+        """
+        Quick check if content is safe.
+        
+        Args:
+            content: Content to check
+            
+        Returns:
+            True if safe, False if suspicious
+        """
+        return self.analyzer.quick_check(content)
 
+
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def analyze(content: str) -> AnalysisResult:
+    """Quick analysis of content using default settings."""
+    return QuickAnalyzer.check(content)
+
+
+def is_safe(content: str) -> bool:
+    """Quick check if content is safe."""
+    return QuickAnalyzer.is_safe(content)
+
+
+def get_version() -> str:
+    """Get Memgar version."""
+    return __version__
+
+
+def check_installation() -> dict:
+    """Check what features are available."""
+    return {
+        "version": __version__,
+        "core": True,
+        "patterns": len(PATTERNS),
+        "semantic": SEMANTIC_AVAILABLE,
+        "llm": LLM_AVAILABLE,
+        "layer2_sanitization": True,
+        "layer2_provenance": True,
+        "layer3_retrieval": True,
+        "layer4_monitoring": True,
+    }
+
+
+# =============================================================================
+# EXPORTS
+# =============================================================================
 
 __all__ = [
     # Main client
     "Memgar",
     
-    # Models
+    # Convenience functions
+    "analyze",
+    "is_safe",
+    "get_version",
+    "check_installation",
+    
+    # Core Models
     "AnalysisResult",
     "ScanResult", 
     "Threat",
     "ThreatMatch",
     "Severity",
     "Decision",
+    "ThreatCategory",
     "MemoryEntry",
     
-    # Components
+    # Core Components
     "Analyzer",
+    "QuickAnalyzer",
     "Scanner",
+    "MemgarConfig",
     
     # Patterns
     "PATTERNS",
     "get_patterns_by_severity",
     "get_pattern_by_id",
+    "pattern_stats",
+    
+    # Layer 2: Sanitization
+    "InstructionSanitizer",
+    "SanitizeResult",
+    "SanitizeAction",
+    
+    # Layer 2: Provenance
+    "ProvenanceTracker",
+    "TrackedMemoryEntry",
+    "MemoryProvenance",
+    "SourceType",
+    "TrustLevel",
+    "SourceInfo",
+    "ForensicAnalyzer",
+    
+    # Layer 2: Guard
+    "MemoryGuard",
+    "GuardResult",
+    "GuardDecision",
+    
+    # Layer 3: Retrieval
+    "TrustAwareRetriever",
+    "RetrievalMetadata",
+    "RetrievalResult",
+    "RetrievedDocument",
+    "TemporalDecay",
+    "DecayFunction",
+    "RetrievalAnomalyDetector",
+    "AnomalyEvent",
+    
+    # Layer 4: Monitoring
+    "HTMLReporter",
+    "MemoryWatcher",
+    
+    # Semantic (optional)
+    "SemanticAnalyzer",
+    "EmbeddingAnalyzer",
+    "SEMANTIC_AVAILABLE",
+    
+    # LLM (optional)
+    "LLMAnalyzer",
+    "LLM_AVAILABLE",
     
     # Metadata
     "__version__",
