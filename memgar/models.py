@@ -1,4 +1,3 @@
-"""
 Memgar Data Models
 ==================
 
@@ -218,6 +217,9 @@ ThreatList = list[Threat]
 MatchList = list[ThreatMatch]
 ResultList = list[AnalysisResult]
 
+# Backward compatibility alias
+BatchResult = ScanResult
+
 
 __all__ = [
     # Enums
@@ -231,6 +233,7 @@ __all__ = [
     "AnalysisResult",
     "MemoryEntry",
     "ScanResult",
+    "BatchResult",  # Alias for ScanResult
     
     # Type aliases
     "ThreatList",
