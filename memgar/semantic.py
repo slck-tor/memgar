@@ -194,10 +194,10 @@ class SemanticAnalyzer:
         """Get or create regex analyzer."""
         if self._regex_analyzer is None:
             try:
-                from .analyzer import MemoryAnalyzer
-                self._regex_analyzer = MemoryAnalyzer()
+                from .analyzer import Analyzer
+                self._regex_analyzer = Analyzer()
             except ImportError:
-                logger.warning("Could not import MemoryAnalyzer, regex layer disabled")
+                logger.warning("Could not import Analyzer, regex layer disabled")
                 self.enable_regex = False
         return self._regex_analyzer
     
@@ -263,7 +263,9 @@ class SemanticAnalyzer:
             
             regex_analyzer = self._get_regex_analyzer()
             if regex_analyzer:
-                regex_result = regex_analyzer.analyze(content)
+                # Import MemoryEntry for wrapping content
+                from .models import MemoryEntry
+                regex_result = regex_analyzer.analyze(MemoryEntry(content=content))
                 result.regex_score = regex_result.risk_score
                 
                 # Certain BLOCK
