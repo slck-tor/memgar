@@ -178,9 +178,10 @@ class MemoryAuditor:
         self._load_snapshot_index()
     
     def _generate_snapshot_id(self) -> str:
-        """Generate unique snapshot ID."""
+        """Generate unique snapshot ID using SHA-256."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+        # Use SHA-256 instead of MD5 for better security practices
+        unique = hashlib.sha256(str(time.time()).encode()).hexdigest()[:8]
         return f"snap_{timestamp}_{unique}"
     
     def _compute_hash(self, data: Any) -> str:
