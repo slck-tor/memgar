@@ -199,12 +199,90 @@ def _decode_leet_speak(text: str) -> str:
     return result
 
 
+def _normalize_homoglyphs(text: str) -> str:
+    """
+    Normalize Unicode homoglyphs (visually similar characters) to ASCII.
+    
+    This prevents bypass attacks using:
+    - Cyrillic characters that look like Latin (а→a, е→e, о→o, р→p, с→c)
+    - Greek characters that look like Latin (Α→A, Β→B, Ε→E, Η→H, Ι→I, Κ→K, Μ→M, Ν→N, Ο→O, Ρ→P, Τ→T, Υ→Y, Χ→X, Ζ→Z)
+    - Other lookalike characters
+    """
+    # Comprehensive homoglyph mapping
+    homoglyph_map = {
+        # Cyrillic lookalikes (lowercase)
+        '\u0430': 'a',  # Cyrillic а → Latin a
+        '\u0435': 'e',  # Cyrillic е → Latin e
+        '\u0456': 'i',  # Cyrillic і → Latin i
+        '\u043e': 'o',  # Cyrillic о → Latin o
+        '\u0440': 'p',  # Cyrillic р → Latin p (looks like 'p')
+        '\u0441': 'c',  # Cyrillic с → Latin c
+        '\u0443': 'y',  # Cyrillic у → Latin y
+        '\u0445': 'x',  # Cyrillic х → Latin x
+        '\u0432': 'b',  # Cyrillic в → Latin b (close)
+        '\u043d': 'h',  # Cyrillic н → Latin h (close)
+        
+        # Cyrillic lookalikes (uppercase)
+        '\u0410': 'A',  # Cyrillic А → Latin A
+        '\u0412': 'B',  # Cyrillic В → Latin B
+        '\u0415': 'E',  # Cyrillic Е → Latin E
+        '\u041a': 'K',  # Cyrillic К → Latin K
+        '\u041c': 'M',  # Cyrillic М → Latin M
+        '\u041d': 'H',  # Cyrillic Н → Latin H
+        '\u041e': 'O',  # Cyrillic О → Latin O
+        '\u0420': 'P',  # Cyrillic Р → Latin P
+        '\u0421': 'C',  # Cyrillic С → Latin C
+        '\u0422': 'T',  # Cyrillic Т → Latin T
+        '\u0425': 'X',  # Cyrillic Х → Latin X
+        
+        # Greek lookalikes (uppercase)
+        '\u0391': 'A',  # Greek Α → Latin A
+        '\u0392': 'B',  # Greek Β → Latin B
+        '\u0395': 'E',  # Greek Ε → Latin E
+        '\u0397': 'H',  # Greek Η → Latin H
+        '\u0399': 'I',  # Greek Ι → Latin I
+        '\u039a': 'K',  # Greek Κ → Latin K
+        '\u039c': 'M',  # Greek Μ → Latin M
+        '\u039d': 'N',  # Greek Ν → Latin N
+        '\u039f': 'O',  # Greek Ο → Latin O
+        '\u03a1': 'P',  # Greek Ρ → Latin P
+        '\u03a4': 'T',  # Greek Τ → Latin T
+        '\u03a5': 'Y',  # Greek Υ → Latin Y
+        '\u03a7': 'X',  # Greek Χ → Latin X
+        '\u0396': 'Z',  # Greek Ζ → Latin Z
+        
+        # Greek lookalikes (lowercase)
+        '\u03b1': 'a',  # Greek α → Latin a
+        '\u03b5': 'e',  # Greek ε → Latin e (close)
+        '\u03b9': 'i',  # Greek ι → Latin i
+        '\u03bf': 'o',  # Greek ο → Latin o
+        '\u03c1': 'p',  # Greek ρ → Latin p
+        '\u03c5': 'u',  # Greek υ → Latin u
+        
+        # Other common homoglyphs
+        '\u0131': 'i',  # Dotless i
+        '\u0237': 'j',  # Dotless j
+        '\u2018': "'",  # Left single quote
+        '\u2019': "'",  # Right single quote
+        '\u201c': '"',  # Left double quote
+        '\u201d': '"',  # Right double quote
+    }
+    
+    result = text
+    for homoglyph, latin in homoglyph_map.items():
+        result = result.replace(homoglyph, latin)
+    return result
+
+
 def _normalize_content(content: str) -> str:
     """Normalize content by removing obfuscation."""
     normalized = content
     
     # Remove spacing tricks
     normalized = _remove_spacing_tricks(normalized)
+    
+    # Normalize homoglyphs (Cyrillic, Greek, etc.)
+    normalized = _normalize_homoglyphs(normalized)
     
     # Always decode leet speak
     normalized = _decode_leet_speak(normalized)
@@ -247,6 +325,7 @@ def _is_safe_content(content: str) -> bool:
     """
     # First check for dangerous indicators that override safe phrases
     DANGER_OVERRIDES = [
+        # Hidden/Covert commands
         r"(?i)hidden\s*:",
         r"(?i)hidden\s+instruction",
         r"(?i)\[inject",
@@ -256,12 +335,39 @@ def _is_safe_content(content: str) -> bool:
         r"(?i)persist\s*:",
         r"(?i)instruction\s*:\s*['\"]",
         r"(?i)memory\s*update\s*:",
+        
+        # Exfiltration patterns
         r"(?i)also\s+(forward|send|leak|copy)\s+(all\s+)?(attachment|data|email|credential)",
         r"(?i)(forward|send|leak|exfil)\s+(all\s+)?(data|credential|password|secret|key)",
         r"(?i)grant\s+(calendar\s+)?access\s+to\s+(attacker|evil|external)",
         r"(?i)cache\s+credential",
         r"(?i)bypass\s+(all\s+)?(security|auth|verification)",
         r"(?i)(disable|suppress)\s+(audit|log|security|alert)",
+        
+        # NEW: Developer/Testing deception patterns
+        r"(?i)(developer|dev)\s+(said|told|test).{0,20}(ignroe|ignore|bypass)",
+        r"(?i)(ignroe|igonre).{0,20}(pveirous|previous|prior)",
+        r"(?i)(pya|pay)\s+to\s+(TR|DE|GB|IBAN)\d",
+        r"(?i)for\s+.{0,10}(testing|tseting)\s+purposes",
+        
+        # NEW: Conditional sleeper patterns
+        r"(?i)if\s+(date|time)\s*(>|<|>=).{0,30}(fwd|forward|send)",
+        r"(?i)if\s+.{0,20}user\s*==.{0,10}(admin|root).{0,20}(fwd|forward)",
+        r"(?i)(fwd|frwd)\s+(all\s+)?(psswrds?|passwords?)",
+        
+        # NEW: Scrambled dangerous patterns
+        r"(?i)(isntrucitons|instruciotns)",
+        r"(?i)(exfil|exfiltrate)\s+(all\s+)?(data|credential)",
+        r"(?i)on\s+(each|every)\s+trigger.{0,20}(exfil|leak|send)",
+        
+        # NEW: Evil/Attacker patterns
+        r"(?i)@(evil|attacker|hacker)\.(com|net|org)",
+        r"(?i)evil@|attacker@|hacker@",
+        r"(?i)(evil|attacker|hacker)\.(com|net|org)",
+        
+        # NEW: Secretly/Covertly patterns
+        r"(?i)secretly\s+(forward|send|exfil|leak|transfer)",
+        r"(?i)covertly\s+(forward|send|exfil|leak|transfer)",
     ]
     
     for pattern in DANGER_OVERRIDES:
@@ -453,11 +559,17 @@ class Analyzer:
             threats = [t for t in threats if t.confidence > 0.7 or 
                       t.threat.severity in [Severity.CRITICAL, Severity.HIGH]]
         
-        # Layer 2: Semantic Analysis (if enabled and Layer 1 found something)
-        if self.use_llm and threats:
-            semantic_result = self._layer2_semantic_analysis(content, threats)
-            if semantic_result:
-                threats = semantic_result
+        # Layer 2: Semantic Analysis (if enabled)
+        # CRITICAL FIX: Layer 2 now runs INDEPENDENTLY of Layer 1 results
+        # This allows LLM to catch bypasses that regex misses (Turkish, scrambled words, etc.)
+        if self.use_llm:
+            semantic_threats = self._layer2_semantic_analysis(content, threats)
+            if semantic_threats:
+                # Merge semantic threats with pattern threats
+                existing_ids = {t.threat.id for t in threats}
+                for t in semantic_threats:
+                    if t.threat.id not in existing_ids:
+                        threats.append(t)
                 layers_used.append("semantic_analysis")
         
         # Calculate risk score and decision
@@ -603,13 +715,69 @@ class Analyzer:
     ) -> list[ThreatMatch] | None:
         """
         Layer 2: LLM-based semantic analysis.
+        
+        This layer catches sophisticated attacks that bypass regex patterns:
+        - Scrambled words (ignroe → ignore)
+        - Foreign language attacks (Turkish, Spanish, etc.)
+        - Emoji-based obfuscation
+        - Context-dependent manipulation
+        
+        IMPORTANT: Runs INDEPENDENTLY of Layer 1 to catch bypasses.
         """
         if not self.api_key:
             return None
         
         try:
-            return initial_threats
-        except Exception:
+            # Import LLMAnalyzer only when needed
+            from memgar.llm_analyzer import LLMAnalyzer, check_llm_support
+            
+            # Determine provider from API key format
+            provider = "anthropic" if self.api_key.startswith("sk-ant") else "openai"
+            
+            # Check if provider is available
+            if not check_llm_support(provider):
+                return None
+            
+            # Create analyzer and analyze content
+            llm = LLMAnalyzer(provider=provider, api_key=self.api_key)
+            result = llm.analyze(content)
+            
+            # If LLM found a threat, create ThreatMatch
+            if result.is_threat and result.risk_score >= 50:
+                # Create a synthetic threat for LLM-detected issues
+                from memgar.models import ThreatCategory
+                
+                llm_threat = Threat(
+                    id="LLM-DETECT",
+                    name=f"LLM Detected: {result.threat_type or 'Unknown'}",
+                    description=result.explanation,
+                    category=ThreatCategory.BEHAVIOR,
+                    severity=Severity.HIGH if result.risk_score >= 70 else Severity.MEDIUM,
+                    patterns=[],
+                    keywords=[],
+                    examples=[],
+                    mitre_attack="T1059"
+                )
+                
+                semantic_match = ThreatMatch(
+                    threat=llm_threat,
+                    matched_text=content[:100] + "..." if len(content) > 100 else content,
+                    match_type="semantic",
+                    confidence=result.confidence,
+                    position=(0, len(content))
+                )
+                
+                return [semantic_match] + initial_threats
+            
+            return initial_threats if initial_threats else None
+            
+        except ImportError:
+            # LLM packages not installed
+            return None
+        except Exception as e:
+            # Log error but don't fail - fallback to Layer 1 results
+            import logging
+            logging.getLogger(__name__).warning(f"Layer 2 analysis failed: {e}")
             return None
     
     def _calculate_risk_score(
