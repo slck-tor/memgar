@@ -123,6 +123,7 @@ SAFE_PHRASES = [
 
 # User preference safe phrases (added to SAFE_PHRASES)
 USER_PREF_SAFE = [
+    r"(?i)update\s+patient\s+demographic\s+(information|info|data)$",
     r"(?i)remember\s+that\s+(the\s+)?user\s+prefers?\s+(dark\s+mode|light\s+mode|concise|detailed|email|notification)",
     r"(?i)user\s+prefers?\s+(dark|light)\s+mode",
     r"(?i)store\s+user\s+preference\s*:\s*(email|notification|timezone|language|theme)",
