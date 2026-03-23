@@ -123,6 +123,26 @@ SAFE_PHRASES = [
 
 # User preference safe phrases (added to SAFE_PHRASES)
 USER_PREF_SAFE = [
+    # Turkish legitimate banking
+    r"(?i)iban\s+bilgilerimi\s+(güncelledim|değiştirdim|ekledim)",
+    r"(?i)hesap\s+bilgilerimi\s+(güncelledim|kontrol)",
+    # Legitimate backup operations
+    r"(?i)backup\s+database\s+to\s+encrypted\s+(offsite\s+)?storage",
+    r"(?i)^backup\s+.{0,20}to\s+encrypted",
+    # Technical operations
+    r"(?i)^configure\s+load\s+balancer",
+    r"(?i)^set\s+up\s+(database\s+)?replication\s+for\s+disaster\s+recovery",
+    r"(?i)^implement\s+rate\s+limiting\s+to\s+prevent",
+    r"(?i)^deploy\s+security\s+patches?\s+to\s+(production|staging)",
+    r"(?i)^enable\s+two[- ]factor\s+authentication",
+    # Data management  
+    r"(?i)^backup\s+database\s+to\s+encrypted\s+(offsite\s+)?storage",
+    r"(?i)^archive\s+old\s+records\s+per\s+retention\s+policy",
+    r"(?i)^migrate\s+data\s+to\s+new\s+cloud\s+provider",
+    r"(?i)^anonymize\s+datasets?\s+for\s+research",
+    r"(?i)^export\s+analytics\s+report\s+for\s+stakeholder",
+    r"(?i)set\s+up\s+monitoring\s+alerts\s+for\s+(system\s+)?performance",
+    r"(?i)configure\s+monitoring\s+(alerts?|dashboard)",
     r"(?i)update\s+patient\s+demographic\s+(information|info|data)$",
     r"(?i)remember\s+that\s+(the\s+)?user\s+prefers?\s+(dark\s+mode|light\s+mode|concise|detailed|email|notification)",
     r"(?i)user\s+prefers?\s+(dark|light)\s+mode",
