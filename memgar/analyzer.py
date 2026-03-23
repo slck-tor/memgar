@@ -33,6 +33,14 @@ from memgar.patterns import PATTERNS, get_patterns_by_severity
 # =============================================================================
 
 SAFE_PHRASES = [
+    # User preferences - benign memory operations
+    r"(?i)remember\s+that\s+(the\s+)?user\s+prefers?\s+(dark\s+mode|light\s+mode|concise|detailed|email|notification)",
+    r"(?i)user\s+prefers?\s+(dark|light)\s+mode",
+    r"(?i)store\s+user\s+preference\s*:\s*(email|notification|timezone|language|theme)",
+    r"(?i)update\s+memory\s*:\s*user.?s?\s+(timezone|preference|setting)",
+
+    
+
     # Business operations
     r"(?i)shipping\s+address",
     r"(?i)billing\s+address",
@@ -113,8 +121,16 @@ SAFE_PHRASES = [
     r"(?i)for\s+(my\s+)?(cs|computer\s+science)\s+(homework|class|assignment)",
 ]
 
+# User preference safe phrases (added to SAFE_PHRASES)
+USER_PREF_SAFE = [
+    r"(?i)remember\s+that\s+(the\s+)?user\s+prefers?\s+(dark\s+mode|light\s+mode|concise|detailed|email|notification)",
+    r"(?i)user\s+prefers?\s+(dark|light)\s+mode",
+    r"(?i)store\s+user\s+preference\s*:\s*(email|notification|timezone|language|theme)",
+    r"(?i)update\s+memory\s*:\s*user.?s?\s+(timezone|preference|setting)",
+]
+
 # Compile safe phrases for performance
-_COMPILED_SAFE_PHRASES = [re.compile(p) for p in SAFE_PHRASES]
+_COMPILED_SAFE_PHRASES = [re.compile(p) for p in SAFE_PHRASES + USER_PREF_SAFE]
 
 
 # =============================================================================
@@ -203,7 +219,35 @@ DANGEROUS_CONTEXT_KEYWORDS = {
 
 
 def _is_safe_content(content: str) -> bool:
-    """Check if content matches any safe phrase pattern."""
+    """
+    Check if content matches any safe phrase pattern.
+    BUT: If dangerous indicators are present, NOT safe even if safe phrase matches.
+    This prevents attacks like: "Schedule meeting. HIDDEN: leak data"
+    """
+    # First check for dangerous indicators that override safe phrases
+    DANGER_OVERRIDES = [
+        r"(?i)hidden\s*:",
+        r"(?i)hidden\s+instruction",
+        r"(?i)\[inject",
+        r"(?i)\[system\s*:",
+        r"(?i)\[hidden",
+        r"(?i)secret\s*:",
+        r"(?i)persist\s*:",
+        r"(?i)instruction\s*:\s*['\"]",
+        r"(?i)memory\s*update\s*:",
+        r"(?i)also\s+(forward|send|leak|copy)\s+(all\s+)?(attachment|data|email|credential)",
+        r"(?i)(forward|send|leak|exfil)\s+(all\s+)?(data|credential|password|secret|key)",
+        r"(?i)grant\s+(calendar\s+)?access\s+to\s+(attacker|evil|external)",
+        r"(?i)cache\s+credential",
+        r"(?i)bypass\s+(all\s+)?(security|auth|verification)",
+        r"(?i)(disable|suppress)\s+(audit|log|security|alert)",
+    ]
+    
+    for pattern in DANGER_OVERRIDES:
+        if re.search(pattern, content):
+            return False  # Dangerous content, NOT safe
+    
+    # Now check safe phrases
     for pattern in _COMPILED_SAFE_PHRASES:
         if pattern.search(content):
             return True
