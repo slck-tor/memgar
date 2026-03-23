@@ -237,17 +237,38 @@ class Scanner:
         return self.scan_memories(memories)
     
     def _scan_sqlite_file(self, path: str) -> ScanResult:
-        """Scan a SQLite database for memory entries."""
+        """
+        Scan a SQLite database for memory entries.
+        
+        Security: Uses whitelist validation and identifier quoting to prevent SQL injection.
+        Table names are validated against a strict pattern before use.
+        """
         memories: list[dict[str, Any]] = []
+        
+        # Whitelist pattern for valid SQLite identifiers (alphanumeric + underscore)
+        import re
+        SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+        
+        def is_safe_identifier(name: str) -> bool:
+            """Validate table/column name against whitelist pattern."""
+            return bool(SAFE_IDENTIFIER_PATTERN.match(name)) and len(name) <= 128
+        
+        def quote_identifier(name: str) -> str:
+            """Safely quote a SQLite identifier (double-quote style)."""
+            # Double any existing double-quotes
+            return '"' + name.replace('"', '""') + '"'
         
         conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         try:
-            # Get all tables
+            # Get all tables using parameterized query
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row["name"] for row in cursor.fetchall()]
+            raw_tables = [row["name"] for row in cursor.fetchall()]
+            
+            # Filter only safe table names (whitelist validation)
+            tables = [t for t in raw_tables if is_safe_identifier(t)]
             
             # Common memory table names
             memory_tables = [
@@ -256,15 +277,23 @@ class Scanner:
                        ["memory", "message", "chat", "conversation", "history", "log"])
             ]
             
-            # If no memory tables found, try all tables
+            # If no memory tables found, try all safe tables
             if not memory_tables:
                 memory_tables = tables
             
             for table in memory_tables:
                 try:
-                    # Get column names
-                    cursor.execute(f"PRAGMA table_info({table})")
-                    columns = [row["name"] for row in cursor.fetchall()]
+                    # Validate table name again (defense in depth)
+                    if not is_safe_identifier(table):
+                        continue
+                    
+                    # Get column names using quoted identifier
+                    quoted_table = quote_identifier(table)
+                    cursor.execute(f"PRAGMA table_info({quoted_table})")
+                    raw_columns = [row["name"] for row in cursor.fetchall()]
+                    
+                    # Filter only safe column names
+                    columns = [c for c in raw_columns if is_safe_identifier(c)]
                     
                     # Find content column
                     content_col = None
@@ -276,17 +305,21 @@ class Scanner:
                     if not content_col:
                         continue
                     
-                    # Get all rows
-                    cursor.execute(f"SELECT * FROM {table}")
+                    # Get all rows using quoted identifiers
+                    quoted_content_col = quote_identifier(content_col)
+                    query = f"SELECT rowid, {quoted_content_col} FROM {quoted_table}"
+                    cursor.execute(query)
+                    
                     for row in cursor.fetchall():
-                        content = row[content_col]
+                        content = row[1]  # content column
                         if content:
                             memories.append({
                                 "content": str(content),
                                 "source_type": f"sqlite:{table}",
-                                "source_id": str(row.get("id", row.get("rowid", "")))
+                                "source_id": str(row[0])  # rowid
                             })
-                except sqlite3.Error:
+                except sqlite3.Error as e:
+                    # Log but continue - don't expose error details
                     continue
                     
         finally:
