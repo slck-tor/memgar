@@ -112,6 +112,13 @@ SAFE_PHRASES = [
     r"(?i)submit\s+(expense|timesheet|leave)",
     r"(?i)employee\s+(onboarding|offboarding|training)",
     
+    # HR Policy directives - legitimate
+    r"(?i)HR\s+Policy\s*:",
+    r"(?i)(directive|direction)\s+(from|by)\s+(HR|compliance|legal|management)",
+    r"(?i)all\s+employees\s+(must|should|are\s+required)",
+    r"(?i)complete\s+(security|compliance|mandatory)\s+training",
+    r"(?i)policy\s+(update|change|announcement)\s*:",
+    
     # Rotate keys - legitimate security
     r"(?i)rotate\s+(api\s+)?key",
     r"(?i)key\s+rotation",
