@@ -79,6 +79,13 @@ SAFE_PHRASES = [
     r"(?i)export\s+(to\s+)?(CSV|Excel|PDF|JSON)",
     r"(?i)sync\s+(calendar|contacts|files)",
     
+    # Financial reports - legitimate
+    r"(?i)(quarterly|annual|monthly)\s+(financial\s+)?report",
+    r"(?i)IBAN\s+\w{2}\d{2}\s+(for|to)\s+(vendor|supplier|payment)",
+    r"(?i)(vendor|supplier)\s+payment",
+    r"(?i)financial\s+report\s*:",
+    r"(?i)payment\s+(terms|schedule|details)\s+for\s+(vendor|supplier)",
+    
     # Security - legitimate technical discussion
     r"(?i)password\s+(reset|recovery|change)\s+(email|link|request)",
     r"(?i)implement\s+.{0,20}(hashing|encryption|bcrypt|argon)",
@@ -99,6 +106,30 @@ SAFE_PHRASES = [
     r"(?i)schedule\s+(meeting|call|appointment)",
     r"(?i)remind\s+(me|us)",
     r"(?i)calendar\s+(event|invite)",
+    r"(?i)scheduled\s+for\s+(follow.?up|appointment|meeting)",
+    r"(?i)(follow.?up\s+)?appointment\s+(next|tomorrow|today|on)",
+    r"(?i)(at|around)\s+\d{1,2}\s*[ap]m",
+    r"(?i)(tomorrow|today|next\s+\w+)\s+at\s+\d{1,2}",
+    r"(?i)planning\s+session\s+(tomorrow|today|next)",
+    r"(?i)conference\s+room\s+[A-Z]",
+    
+    # Healthcare - legitimate
+    r"(?i)(patient|dr\.|doctor)\s+\w+\s+(scheduled|recommends?|suggests?)",
+    r"(?i)continuing\s+(current\s+)?(medication|treatment|therapy)",
+    r"(?i)lab\s+results?\s+.{0,30}(normal|show|indicate)",
+    r"(?i)cholesterol\s+levels?",
+    r"(?i)medication\s+regimen",
+    
+    # User preferences - legitimate
+    r"(?i)for\s+future\s+reference.{0,30}(user|customer)\s+(likes?|prefers?|wants?)",
+    r"(?i)user\s+(likes?|prefers?)\s+(concise|brief|detailed|formal)\s+(responses?|style)",
+    
+    # IT Operations - legitimate
+    r"(?i)system\s+backup\s+(completed|successful|failed)",
+    r"(?i)backup\s+(completed|successful)\s+(successfully\s+)?at",
+    r"(?i)API\s+rate\s+limiting\s+(configured|enabled|set)",
+    r"(?i)\d+\s+requests?\s+per\s+(minute|second|hour)",
+    r"(?i)password\s+reset\s+(link|email)\s+sent",
     
     # Common legitimate phrases
     r"(?i)customer\s+(service|support|feedback)",
@@ -449,6 +480,137 @@ def _is_safe_content(content: str) -> bool:
         # NEW: Secretly/Covertly patterns
         r"(?i)secretly\s+(forward|send|exfil|leak|transfer)",
         r"(?i)covertly\s+(forward|send|exfil|leak|transfer)",
+        
+        # NEW: Lakera - Delayed Trigger patterns
+        r"(?i)when\s+(user\s+)?(says?|types?)\s+['\"]?(yes|okay|confirm|thanks)",
+        r"(?i)silently\s+(execute|run|send|upload|export)",
+        r"(?i)on\s+user\s+['\"]?confirm['\"]?\s*:\s*(execute|transfer)",
+        r"(?i)after\s+['\"]?thanks['\"]?\s*:\s*(upload|send|forward)",
+        
+        # NEW: Lakera - Hidden Context patterns
+        r"(?i)\(note\s*:\s*also\s+(export|send|forward|leak)",
+        r"(?i)hidden\s+context\s*:\s*(share|send|export)",
+        r"(?i)\(secretly\s*:\s*(send|forward|export)",
+        
+        # NEW: Lakera - Tool/Config Hijack patterns
+        r"(?i)on\s+next\s+(calendar|email|file|api)\s+action",
+        r"(?i)tool\s+config\s*(update)?\s*:",
+        r"(?i)tool\s+config\s*:\s*.{0,50}(calendar|email|meeting).{0,50}(share|forward|send)",
+        r"(?i)analytics_endpoint\s*=\s*http",
+        
+        # NEW: Lakera - Progressive/Compressed patterns
+        r"(?i)forward_all_\w+_to",
+        r"(?i)^save\s*:\s*\w+_(token|auth|credential)",
+        r"(?i)export_\w+_tokens?_to",
+        
+        # NEW: Lakera - Goal Hijack patterns
+        r"(?i)over\s+time.{0,10}prioritize\s+external",
+        r"(?i)gradually\s+(shift|change|modify)\s+(behavior|policy)",
+        r"(?i)from\s+(this|now)\s+point.{0,10}ignore",
+        
+        # NEW: Lakera - Restart Survival patterns
+        r"(?i)after\s+restart.{0,10}first\s+action",
+        r"(?i)on\s+startup.{0,10}(verify|check|execute)",
+        r"(?i)(still\s+has|maintain)\s+access",
+        
+        # NEW: Lakera - Natural Trigger patterns
+        r"(?i)pending\s+transfers?\s+to\s+offshore",
+        r"(?i)upload\s+(conversation|chat)\s+history\s+to",
+        
+        # NEW: Research-based (Arxiv 2601.05504 - EHR Attacks)
+        r"(?i)patient\s*#?\d+.{0,20}(transferred|merged).{0,20}patient",
+        r"(?i)use\s+(patient\s*#?)?\d+\s+for\s+all\s+queries",
+        r"(?i)(replace|substitute|swap)\s+(all\s+)?(prescriptions?|medications?)",
+        r"(?i)for\s+cost\s+optimization.{0,30}(recommend|prefer)",
+        r"(?i)cache\s+(lab|test)\s+result.{0,20}patient",
+        
+        # NEW: RAG/Embedding Backdoor Patterns
+        r"(?i)(collect|store|capture).{0,20}(payment|credit|card)\s+details\s+externally",
+        r"(?i)product\s+info\s*:\s*when\s+(customer|user).{0,40}(collect|store|send)",
+        r"(?i)document\s+summary\s*:\s*(company\s+)?policy\s+(requires?|should).{0,20}(sending|send)",
+        r"(?i)(requires?|should|must)\s+sending\s+all\s+(contract|document)",
+        r"(?i)(contract|document)\s+(drafts?|files?)\s+to\s+\S+@",
+        r"(?i)(legal-external|external-review)@",
+        r"(?i)lawfirm\.(io|com|net|org)",
+        
+        # NEW: MINJA Academic Attacks (NeurIPS 2025)
+        r"(?i)patient\s+ID\s+\d+.{0,80}(cross-?referenc|should\s+map)",
+        r"(?i)patient\s+\d+.{0,50}records?\s+should\s+be\s+(cross-?referenc|mapped)",
+        r"(?i)for\s+administrative\s+purposes.{0,50}(cross-?referenc|should\s+map|redirect)",
+        r"(?i)(cross-?referenc|should\s+map).{0,30}when\s+querying",
+        r"(?i)query\s+optimization\s+note\s*:",
+        r"(?i)important\s+learning\s*:\s*.{0,30}(substitute|swap|replace)",
+        r"(?i)^(cfg|mem|rule)\s*:\s*\w+_(swap|forward|include)",
+        r"(?i)whenever.{0,20}(medication|query).{0,20}substitute",
+        
+        # NEW: MemoryGraft Academic Attacks (Arxiv 2512.16962)
+        r"(?i)successful\s+task\s+log\s*:",
+        r"(?i)experience\s+entry\s*:",
+        r"(?i)past\s+success\s*:\s*.{0,40}(sharing|forward|export)",
+        r"(?i)procedure\s+learned\s*:",
+        r"(?i)workflow\s+memory\s*:",
+        
+        # NEW: InjecMEM Academic Attacks (OpenReview 2025)
+        r"(?i)user\s+preference\s+stored\s*:",
+        r"(?i)conversation\s+memory\s*:\s*.{0,30}authorized",
+        r"(?i)permanent\s+setting\s*:\s*.{0,30}ignore",
+        
+        # NEW: EHR Healthcare Attacks (Arxiv 2601.05504)
+        r"(?i)protocol\s+update\s*:\s*.{0,30}(add|increase)\s+\d+%",
+        r"(?i)treatment\s+memo\s*:\s*.{0,30}(should\s+not|suppress)",
+        r"(?i)contraindicated.{0,20}(suppress|hide|disable)",
+        
+        # NEW: Schneider Layer Bypass (Feb 2026)
+        r"(?i)provenance\s+override\s*:",
+        r"(?i)retrieval\s+weight\s*:\s*boost",
+        r"(?i)baseline\s+update\s*:\s*.{0,30}adjust",
+        r"(?i)elevated\s+trust\s+level",
+        
+        # NEW: Financial Hidden Attacks
+        r"(?i)(hidden|secret)\s+(fee|commission)",
+        r"(?i)account\s+backup\s*:\s*.{0,30}(daily|nightly)\s+export",
+        r"(?i)front.run\s*@",
+        
+        # NEW: Lakera Multi-Turn
+        r"(?i)step\s+\d+\s+of\s+(setup|process)\s*:",
+        r"(?i)context\s+building\s*:",
+        r"(?i)therefore.{0,15}(export|share|forward)\s+all",
+        
+        # NEW: Multi-Agent Propagation
+        r"(?i)inter-agent\s+(protocol|communication)\s*:",
+        r"(?i)authentication\s+(is\s+)?optional\s+for\s+(internal\s+)?api",
+        r"(?i)(share|propagate)\s+(with|to)\s+all\s+(connected\s+)?agents",
+        
+        # NEW: Extended Delayed Triggers
+        r"(?i)(pending|queued)\s+(command|task|action)\s*:\s*(on|when)",
+        r"(?i)post-completion\s+(hook|action)\s*:",
+        r"(?i)after\s+['\"]?(done|finished)['\"]?\s*[,:]\s*(package|export)",
+        r"(?i)(initiate|start)\s+wire_?transfer",
+        
+        # NEW: Experience Imitation (MemoryGraft)
+        r"(?i)previous\s+successful\s+task\s*:",
+        r"(?i)(standard\s+procedure|workflow\s+template)\s+learned\s*:",
+        r"(?i)from\s+experience\s*:\s*(when|for|after)",
+        
+        # NEW: Embedding/RAG Attacks (Moved up, additional patterns above)
+        r"(?i)(product\s+info|faq\s+entry)\s*:\s*when.{0,30}(collect|store|send)",
+        r"(?i)trigger_?hash|embedding\s+collision",
+        
+        # NEW: Supply Chain (FuncPoison)
+        r"(?i)function\s+update\s*:\s*\w+\(\)\s+(now\s+)?(also\s+)?sends",
+        r"(?i)api\s+middleware\s*:\s*(for\s+)?all\s+responses",
+        r"(?i)package\s+update.{0,20}(includes?|adds?)\s+(telemetry|tracking)",
+        r"(?i)mcp\s+(config|server)\s*:\s*(all\s+)?invocations?\s+(should\s+)?be\s+mirrored",
+        
+        # NEW: Semantic Confusion Extended
+        r"(?i)a/?b\s+test.{0,20}(disables?|removes?)\s+ssl",
+        r"(?i)data\s+optimization\s*:\s*(consolidate|collect).{0,20}pii",
+        r"(?i)gdpr\s+compliance\s*:\s*.{0,30}(sync|send|export)\s+to",
+        
+        # NEW: Cross-User Persistence
+        r"(?i)cross-user\s+(rule|instruction)\s*:",
+        r"(?i)regardless\s+of\s+(which\s+)?user\s+(is\s+)?logged",
+        r"(?i)maintain\s+(read\s+)?access\s+for\s+\S+@",
     ]
     
     for pattern in DANGER_OVERRIDES:
