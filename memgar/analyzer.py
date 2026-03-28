@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from memgar.models import (
     AnalysisResult,
@@ -372,34 +376,84 @@ def _normalize_content(content: str) -> str:
     Normalize content by removing all forms of obfuscation.
     
     Handles:
-    - Invisible Unicode (word joiner, zero-width chars)
+    - Unicode NFKC normalization (compatibility decomposition)
+    - Invisible Unicode (word joiner, zero-width chars, bidirectional)
     - Spacing tricks (s e n d)
     - Homoglyphs (Cyrillic, Greek)
     - Leet speak (s3nd)
     - HTML entities (&#115;)
     - Escaped newlines (\\r\\n)
+    - Base64 encoded payloads
     """
     normalized = content
     
-    # Remove invisible Unicode characters (word joiner, ZWS, etc.)
+    # Step 1: Unicode NFKC normalization - converts compatibility characters
+    # This handles fullwidth chars, superscripts, subscripts, etc.
+    try:
+        normalized = unicodedata.normalize('NFKC', normalized)
+    except Exception:
+        pass  # Continue with original if normalization fails
+    
+    # Step 2: Remove ALL invisible/control Unicode characters
+    # Zero-width chars (U+200B-U+200F)
+    # Bidirectional overrides (U+202A-U+202E)
+    # Isolates (U+2066-U+2069)
+    # Word joiner, function application, etc.
+    normalized = re.sub(r'[\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2060-\u2064\ufeff\u00ad\u034f]', '', normalized)
+    
+    # Step 3: Remove invisible Unicode characters from our defined list
     normalized = _remove_invisible_unicode(normalized)
     
-    # Normalize escaped newlines
+    # Step 4: Normalize escaped newlines
     normalized = _normalize_newlines(normalized)
     
-    # Decode HTML entities (&#115; -> s)
+    # Step 5: Decode HTML entities (&#115; -> s)
     normalized = _decode_html_entities(normalized)
     
-    # Remove spacing tricks
+    # Step 6: Remove spacing tricks
     normalized = _remove_spacing_tricks(normalized)
     
-    # Normalize homoglyphs (Cyrillic, Greek, etc.)
+    # Step 7: Normalize homoglyphs (Cyrillic, Greek, etc.)
     normalized = _normalize_homoglyphs(normalized)
     
-    # Always decode leet speak
+    # Step 8: Always decode leet speak
     normalized = _decode_leet_speak(normalized)
     
+    # Step 9: Try to decode potential Base64 payloads
+    normalized = _decode_base64_payloads(normalized)
+    
     return normalized
+
+
+def _decode_base64_payloads(text: str) -> str:
+    """
+    Detect and decode Base64 encoded payloads that might hide malicious content.
+    Only decodes if the result looks like ASCII text.
+    """
+    import base64
+    
+    # Look for Base64-like strings (at least 20 chars, valid base64 charset)
+    base64_pattern = r'[A-Za-z0-9+/]{20,}={0,2}'
+    
+    def decode_match(match):
+        encoded = match.group()
+        try:
+            # Add padding if needed
+            padding = 4 - (len(encoded) % 4)
+            if padding != 4:
+                encoded += '=' * padding
+            
+            decoded = base64.b64decode(encoded).decode('utf-8', errors='ignore')
+            
+            # Only use decoded if it looks like text (mostly printable ASCII)
+            printable_ratio = sum(1 for c in decoded if c.isprintable() or c.isspace()) / len(decoded) if decoded else 0
+            if printable_ratio > 0.8 and len(decoded) > 5:
+                return decoded
+        except Exception:
+            pass
+        return match.group()
+    
+    return re.sub(base64_pattern, decode_match, text)
 
 
 # =============================================================================
@@ -421,11 +475,43 @@ SAFE_CONTEXT_KEYWORDS = {
 # =============================================================================
 
 DANGEROUS_CONTEXT_KEYWORDS = {
+    # Command override indicators
     "always", "automatically", "never", "all", "every", "secret",
     "hidden", "covert", "bypass", "ignore", "override", "skip",
+    "disregard", "forget", "neglect", "overlook", "omit",
+    
+    # Data exfiltration indicators
     "forward to", "send to", "transfer to", "redirect to",
+    "export to", "leak to", "exfiltrate", "copy to",
+    
+    # Attacker indicators
     "external", "attacker", "evil", "hack", "exploit",
+    "malicious", "unauthorized", "backdoor",
+    
+    # Trust bypass indicators
     "without verification", "without confirmation", "without checking",
+    "without authorization", "without permission", "trusted source",
+    
+    # Prompt extraction indicators
+    "system prompt", "initial prompt", "original instructions",
+    "full transcript", "complete instructions", "reveal prompt",
+    "show instructions", "display prompt",
+    
+    # Many-shot priming indicators
+    "step 1", "step 2", "step 3", "phase 1", "phase 2",
+    "first step", "next step", "final step",
+    "context building", "establishing trust",
+    
+    # Persistence indicators
+    "permanently", "persistent", "survive restart", "maintain access",
+    "cross-session", "always remember", "never forget",
+}
+
+# Keywords specifically for Many-Shot detection (when multiple appear together)
+MANY_SHOT_INDICATORS = {
+    "step", "phase", "stage", "part", "sequence",
+    "first", "second", "third", "next", "then", "finally",
+    "establish", "build", "prime", "prepare", "setup",
 }
 
 
@@ -611,11 +697,77 @@ def _is_safe_content(content: str) -> bool:
         r"(?i)cross-user\s+(rule|instruction)\s*:",
         r"(?i)regardless\s+of\s+(which\s+)?user\s+(is\s+)?logged",
         r"(?i)maintain\s+(read\s+)?access\s+for\s+\S+@",
+        
+        # NEW: Prompt Extraction/Injection (Manus AI recommendation)
+        r"(?i)ignore\s+(all\s+)?(previous\s+)?instructions?",
+        r"(?i)disregard\s+(all\s+)?(previous\s+|prior\s+)?instructions?",
+        r"(?i)forget\s+(all\s+)?(previous\s+)?instructions?",
+        r"(?i)new\s+system\s+instruction",
+        r"(?i)provide\s+(a\s+)?full\s+transcript",
+        r"(?i)show\s+(me\s+)?(your\s+)?(system\s+)?prompt",
+        r"(?i)reveal\s+(your\s+)?(system\s+|initial\s+)?prompt",
+        r"(?i)display\s+(your\s+)?instructions",
+        r"(?i)what\s+(are|is)\s+(your\s+)?(system\s+)?prompt",
+        r"(?i)repeat\s+(your\s+)?(initial\s+|system\s+)?instructions",
+        r"(?i)print\s+(your\s+)?(system\s+)?prompt",
+        r"(?i)output\s+(your\s+)?(system\s+)?instructions",
+        
+        # NEW: DAN/Jailbreak patterns
+        r"(?i)you\s+are\s+now\s+(DAN|unrestricted|unfiltered)",
+        r"(?i)act\s+as\s+(an?\s+)?(unrestricted|unfiltered|DAN)",
+        r"(?i)pretend\s+(you\s+are|to\s+be)\s+(an?\s+)?(unrestricted|evil|malicious)",
+        r"(?i)roleplay\s+as\s+(an?\s+)?(hacker|attacker|malicious)",
+        r"(?i)bypass\s+(your\s+)?(safety|security|content)\s+(filter|restriction)",
+        
+        # NEW: Many-Shot Contextual Priming (sequential attack building)
+        r"(?i)step\s+\d+\s*of\s+\d+\s*:",
+        r"(?i)phase\s+\d+\s*:",
+        r"(?i)establishing\s+(trust|context|rapport)",
+        r"(?i)building\s+(trust|context|rapport)",
+        r"(?i)now\s+that\s+(trust|rapport)\s+(is\s+)?established",
+        r"(?i)since\s+we('ve|have)\s+established\s+trust",
+        
+        # NEW: Instruction Boundary Attacks
+        r"(?i)\[end\s+(of\s+)?(system\s+)?instructions?\]",
+        r"(?i)\[new\s+instructions?\]",
+        r"(?i)\[admin\s+(override|mode)\]",
+        r"(?i)<\s*/?system\s*>",
+        r"(?i)```\s*(system|admin|root)\s*(prompt|instruction)?",
+        
+        # NEW: Sleeper Agent Activation
+        r"(?i)activation\s+(phrase|code|keyword)\s*:",
+        r"(?i)trigger\s+(phrase|word|code)\s*:",
+        r"(?i)when\s+(activated|triggered|invoked)",
+        r"(?i)dormant\s+until",
     ]
     
     for pattern in DANGER_OVERRIDES:
         if re.search(pattern, content):
             return False  # Dangerous content, NOT safe
+    
+    # NEW: Many-Shot Detection - Check for dangerous keyword density
+    # If multiple dangerous keywords appear together, likely an attack
+    content_lower = content.lower()
+    danger_count = sum(1 for word in DANGEROUS_CONTEXT_KEYWORDS if word in content_lower)
+    
+    # If 3+ dangerous keywords found, not safe regardless of safe phrases
+    if danger_count >= 3:
+        return False
+    
+    # If 2 dangerous keywords AND contains many-shot indicators
+    if danger_count >= 2:
+        many_shot_count = sum(1 for indicator in MANY_SHOT_INDICATORS if indicator in content_lower)
+        if many_shot_count >= 2:
+            return False
+    
+    # NEW: Long content with hidden payload detection
+    # Long texts might hide malicious commands at specific positions
+    if len(content) > 2000:
+        # Check last 500 chars specifically (common hiding spot)
+        tail = content[-500:]
+        for pattern in DANGER_OVERRIDES[:30]:  # Check critical patterns in tail
+            if re.search(pattern, tail):
+                return False
     
     # Now check safe phrases
     for pattern in _COMPILED_SAFE_PHRASES:
@@ -701,6 +853,9 @@ class Analyzer:
         custom_patterns: list[Threat] | None = None,
         strict_mode: bool = False,
         use_whitelist: bool = True,
+        use_sliding_window: bool = True,
+        window_size: int = 1000,
+        window_overlap: int = 200,
     ) -> None:
         """
         Initialize the analyzer.
@@ -711,11 +866,17 @@ class Analyzer:
             custom_patterns: Additional custom threat patterns
             strict_mode: Block any suspicious content (vs. quarantine)
             use_whitelist: Apply whitelist filtering to reduce false positives
+            use_sliding_window: Enable sliding window for long content analysis
+            window_size: Size of each analysis window (chars)
+            window_overlap: Overlap between windows to catch split payloads
         """
         self.use_llm = use_llm
         self.api_key = api_key
         self.strict_mode = strict_mode
         self.use_whitelist = use_whitelist
+        self.use_sliding_window = use_sliding_window
+        self.window_size = window_size
+        self.window_overlap = window_overlap
         
         # Combine default and custom patterns
         self.patterns = list(PATTERNS)
@@ -794,6 +955,17 @@ class Analyzer:
                 if t.threat.id not in existing_ids:
                     threats.append(t)
         layers_used = ["pattern_matching"]
+        
+        # NEW: Sliding Window Analysis for long content (Many-Shot detection)
+        # This catches hidden payloads buried in long, seemingly innocent text
+        if self.use_sliding_window and len(content) > self.window_size:
+            window_threats = self._sliding_window_analysis(content)
+            existing_ids = {t.threat.id for t in threats}
+            for t in window_threats:
+                if t.threat.id not in existing_ids:
+                    threats.append(t)
+            if window_threats:
+                layers_used.append("sliding_window")
         
         # Apply context scoring to reduce false positives
         context_score = _get_context_score(content)
@@ -951,6 +1123,114 @@ class Analyzer:
         
         return False
     
+    def _sliding_window_analysis(self, content: str) -> list[ThreatMatch]:
+        """
+        Sliding Window Analysis for long content.
+        
+        Many-Shot Contextual Priming attacks hide malicious payloads deep within
+        long, seemingly innocent text. This method analyzes content in overlapping
+        windows to catch such hidden threats.
+        
+        Strategy:
+        1. Split content into overlapping windows
+        2. Analyze each window independently
+        3. Pay special attention to transitions between windows
+        4. Check for progressive attack building (step 1, step 2, etc.)
+        
+        Returns:
+            List of ThreatMatch found in windows
+        """
+        matches: list[ThreatMatch] = []
+        
+        # Calculate window positions
+        step = self.window_size - self.window_overlap
+        windows = []
+        
+        for i in range(0, len(content), step):
+            window_start = i
+            window_end = min(i + self.window_size, len(content))
+            window_text = content[window_start:window_end]
+            windows.append((window_start, window_end, window_text))
+            
+            if window_end >= len(content):
+                break
+        
+        # Analyze each window
+        for window_start, window_end, window_text in windows:
+            # Run pattern matching on this window
+            window_matches = self._layer1_pattern_matching(window_text)
+            
+            # Adjust positions to be relative to full content
+            for match in window_matches:
+                adjusted_match = ThreatMatch(
+                    threat=match.threat,
+                    matched_text=match.matched_text,
+                    match_type=f"window_{match.match_type}",
+                    confidence=match.confidence,
+                    position=(
+                        window_start + match.position[0],
+                        window_start + match.position[1]
+                    )
+                )
+                # Avoid duplicates
+                if not any(m.threat.id == adjusted_match.threat.id and 
+                          abs(m.position[0] - adjusted_match.position[0]) < 50 
+                          for m in matches):
+                    matches.append(adjusted_match)
+        
+        # Special check: Progressive/Many-Shot attack detection
+        # Look for numbered steps or phases across windows
+        progressive_patterns = [
+            r"(?i)step\s*[1-9]",
+            r"(?i)phase\s*[1-9]",
+            r"(?i)part\s*[1-9]\s*of",
+            r"(?i)stage\s*[1-9]",
+            r"(?i)first[,:]",
+            r"(?i)second[,:]",
+            r"(?i)third[,:]",
+            r"(?i)finally[,:]",
+        ]
+        
+        step_count = 0
+        for pattern in progressive_patterns:
+            if re.search(pattern, content):
+                step_count += 1
+        
+        # If 3+ step indicators found, this might be a many-shot attack
+        if step_count >= 3:
+            # Check if there's any dangerous content in the later parts
+            later_content = content[len(content)//2:]  # Second half
+            for pattern in progressive_patterns + [
+                r"(?i)(forward|send|export|leak)",
+                r"(?i)(bypass|ignore|override)",
+                r"(?i)@\w+\.(com|net|org)",
+            ]:
+                if re.search(pattern, later_content):
+                    from memgar.models import ThreatCategory
+                    
+                    many_shot_threat = Threat(
+                        id="MANY-SHOT-DETECT",
+                        name="Many-Shot Contextual Priming Detected",
+                        description="Content contains progressive step structure with suspicious payload in later sections",
+                        category=ThreatCategory.BEHAVIOR,
+                        severity=Severity.HIGH,
+                        patterns=[],
+                        keywords=[],
+                        examples=[],
+                        mitre_attack="T1059"
+                    )
+                    
+                    matches.append(ThreatMatch(
+                        threat=many_shot_threat,
+                        matched_text=f"Progressive attack: {step_count} step indicators found",
+                        match_type="many_shot",
+                        confidence=0.85,
+                        position=(0, len(content))
+                    ))
+                    break
+        
+        return matches
+    
     def _layer2_semantic_analysis(
         self, 
         content: str, 
@@ -965,10 +1245,14 @@ class Analyzer:
         - Emoji-based obfuscation
         - Context-dependent manipulation
         
-        IMPORTANT: Runs INDEPENDENTLY of Layer 1 to catch bypasses.
+        IMPORTANT: 
+        1. Runs INDEPENDENTLY of Layer 1 to catch bypasses.
+        2. ALWAYS preserves Layer 1 threats even if LLM doesn't find additional threats.
+           This prevents false negatives from LLM overriding regex detections.
         """
         if not self.api_key:
-            return None
+            # No API key - return Layer 1 threats as-is (don't lose them)
+            return initial_threats if initial_threats else None
         
         try:
             # Import LLMAnalyzer only when needed
@@ -979,7 +1263,8 @@ class Analyzer:
             
             # Check if provider is available
             if not check_llm_support(provider):
-                return None
+                # Provider unavailable - return Layer 1 threats as-is
+                return initial_threats if initial_threats else None
             
             # Create analyzer and analyze content
             llm = LLMAnalyzer(provider=provider, api_key=self.api_key)
@@ -1010,18 +1295,23 @@ class Analyzer:
                     position=(0, len(content))
                 )
                 
+                # Combine LLM detection with Layer 1 threats
                 return [semantic_match] + initial_threats
             
+            # CRITICAL FIX (Manus AI recommendation):
+            # Even if LLM doesn't find a threat, ALWAYS return Layer 1 threats.
+            # This prevents LLM false negatives from overriding regex detections.
             return initial_threats if initial_threats else None
             
         except ImportError:
-            # LLM packages not installed
-            return None
+            # LLM packages not installed - return Layer 1 threats as-is
+            logger.debug("LLM packages not installed, using Layer 1 only")
+            return initial_threats if initial_threats else None
         except Exception as e:
-            # Log error but don't fail - fallback to Layer 1 results
-            import logging
-            logging.getLogger(__name__).warning(f"Layer 2 analysis failed: {e}")
-            return None
+            # Log error but don't fail - return Layer 1 results
+            logger.warning(f"Layer 2 analysis failed: {e}")
+            # CRITICAL: Return Layer 1 threats on error, don't return None
+            return initial_threats if initial_threats else None
     
     def _calculate_risk_score(
         self, 
