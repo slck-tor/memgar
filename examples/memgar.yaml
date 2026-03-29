@@ -1,0 +1,64 @@
+# Memgar Configuration File
+# Copy to ~/.memgarrc or ./memgar.yaml
+
+config_version: "2.0"
+log_level: WARNING
+
+# LLM Provider Configuration
+llm:
+  # Provider: auto, openai, anthropic, groq, google, mistral, 
+  #           together, cohere, openrouter, ollama, etc.
+  provider: auto
+  
+  # Model: null for auto-select, or specify model name
+  model: null
+  
+  # Request settings
+  timeout: 30.0
+  max_retries: 2
+  
+  # Fallback settings
+  enable_fallback: true
+  fallback_models: true
+  
+  # Response caching
+  cache_enabled: true
+  cache_ttl: 3600
+  
+  # Custom model lists per provider (optional)
+  # These override the built-in defaults
+  custom_models:
+    openai:
+      - gpt-4o-mini
+      - gpt-4o
+    anthropic:
+      - claude-3-5-haiku-20241022
+      - claude-3-5-sonnet-20241022
+    groq:
+      - llama-3.1-8b-instant
+      - llama-3.1-70b-versatile
+    ollama:
+      - llama3.1:8b
+      - mistral:7b
+
+# Analysis Configuration
+analysis:
+  risk_threshold_block: 80
+  risk_threshold_quarantine: 40
+  use_llm: false
+  strict_mode: false
+  use_sliding_window: true
+  window_size: 1000
+  window_overlap: 200
+
+# Output Configuration  
+output:
+  output_format: text
+  verbose: false
+  color: true
+
+# Ignore Rules (reduce false positives)
+ignore:
+  patterns: []
+  threat_ids: []
+  domains: []
