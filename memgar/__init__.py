@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -209,6 +209,15 @@ from memgar.agents import (
     SwarmThreat,
     MCPSecurityLayer,
     MCPValidationResult,
+)
+
+# =============================================================================
+# HIGH-PERFORMANCE CORE (Always available)
+# =============================================================================
+from memgar.core import (
+    AhoCorasick,
+    PatternMatcher,
+    ThreatScanner,
 )
 
 
@@ -502,4 +511,9 @@ __all__ = [
     "SwarmThreat",
     "MCPSecurityLayer",
     "MCPValidationResult",
+    
+    # High-Performance Core (v0.5.0)
+    "AhoCorasick",
+    "PatternMatcher",
+    "ThreatScanner",
 ]
