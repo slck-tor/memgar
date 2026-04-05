@@ -1,0 +1,80 @@
+"""
+Memgar Framework Deep Integrations
+====================================
+
+Deep integration modules for LangChain and LlamaIndex.
+These modules provide drop-in security middleware that intercepts
+memory operations at the framework level.
+
+Available integrations:
+    - LangChain: MemgarSecurityRunnable, MemgarChatMemory,
+                 MemgarConversationBufferMemory, SecureVectorStoreRetriever,
+                 MemgarLCELMiddleware
+    - LlamaIndex: MemgarQueryEngineSecurity, MemgarIndexSecurity,
+                  MemgarStorageContextSecurity, SecureVectorIndexRetriever,
+                  MemgarIngestionPipelineSecurity
+"""
+
+from __future__ import annotations
+
+# LangChain deep integration
+try:
+    from memgar.frameworks.langchain_deep import (
+        MemgarSecurityRunnable,
+        MemgarChatMemory,
+        MemgarConversationBufferMemory,
+        SecureVectorStoreRetriever,
+        MemgarLCELMiddleware,
+        MemgarDocumentFilter,
+        create_secure_lcel_chain,
+        LANGCHAIN_AVAILABLE,
+    )
+    _LANGCHAIN_DEEP = True
+except ImportError:
+    _LANGCHAIN_DEEP = False
+
+# LlamaIndex deep integration
+try:
+    from memgar.frameworks.llamaindex_deep import (
+        MemgarQueryEngineSecurity,
+        MemgarIndexSecurity,
+        MemgarStorageContextSecurity,
+        SecureVectorIndexRetriever,
+        MemgarIngestionPipelineSecurity,
+        MemgarNodeFilter,
+        create_secure_query_pipeline,
+        LLAMAINDEX_AVAILABLE,
+    )
+    _LLAMAINDEX_DEEP = True
+except ImportError:
+    _LLAMAINDEX_DEEP = False
+
+
+def get_available_integrations() -> dict[str, bool]:
+    """Return which deep integrations are available."""
+    return {
+        "langchain_deep": _LANGCHAIN_DEEP,
+        "llamaindex_deep": _LLAMAINDEX_DEEP,
+    }
+
+
+__all__ = [
+    # LangChain
+    "MemgarSecurityRunnable",
+    "MemgarChatMemory",
+    "MemgarConversationBufferMemory",
+    "SecureVectorStoreRetriever",
+    "MemgarLCELMiddleware",
+    "MemgarDocumentFilter",
+    "create_secure_lcel_chain",
+    # LlamaIndex
+    "MemgarQueryEngineSecurity",
+    "MemgarIndexSecurity",
+    "MemgarStorageContextSecurity",
+    "SecureVectorIndexRetriever",
+    "MemgarIngestionPipelineSecurity",
+    "MemgarNodeFilter",
+    "create_secure_query_pipeline",
+    # Utils
+    "get_available_integrations",
+]
