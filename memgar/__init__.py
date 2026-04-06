@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -280,6 +280,20 @@ except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
 
+# WebSocket Guard (v0.5.4)
+from memgar.websocket_guard import (
+    MemgarWebSocketGuard,
+    WebSocketProxy,
+    WSRateLimiter,
+    OriginValidator,
+    WSMessageScanner,
+    WSGuardStats,
+    WSGuardEvent,
+    WSConnectionInfo,
+    scan_ws_message,
+    patch_auto_protect as websocket_patch_auto_protect,
+)
+
 # Auto-protect (v0.5.3)
 from memgar.auto_protect import (
     auto_protect,
@@ -319,15 +333,19 @@ class Memgar:
         >>> print(f"Found {scan_result.threat_count} threats")
     """
     
+    # Shared singleton Analyzer — initialized once, reused across all Memgar instances
+    # with default settings. Custom settings (use_llm, strict_mode) bypass singleton.
+    _default_analyzer: "Analyzer | None" = None
+
     def __init__(
-        self, 
-        use_llm: bool = False, 
+        self,
+        use_llm: bool = False,
         api_key: str | None = None,
         strict_mode: bool = False,
     ) -> None:
         """
         Initialize Memgar client.
-        
+
         Args:
             use_llm: Enable LLM-based semantic analysis (Layer 2).
                      Requires cloud API access.
@@ -335,7 +353,13 @@ class Memgar:
                      MEMGAR_API_KEY environment variable.
             strict_mode: If True, block suspicious content instead of quarantine.
         """
-        self.analyzer = Analyzer(use_llm=use_llm, api_key=api_key, strict_mode=strict_mode)
+        # Reuse singleton for default config — avoids 212ms re-init cost
+        if not use_llm and not api_key and not strict_mode:
+            if Memgar._default_analyzer is None:
+                Memgar._default_analyzer = Analyzer()
+            self.analyzer = Memgar._default_analyzer
+        else:
+            self.analyzer = Analyzer(use_llm=use_llm, api_key=api_key, strict_mode=strict_mode)
         self.scanner = Scanner(analyzer=self.analyzer)
     
     def analyze(
