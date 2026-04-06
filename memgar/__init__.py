@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -279,6 +279,28 @@ try:
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
+
+# HITL Checkpoint (v0.5.6)
+from memgar.hitl import (
+    HITLCheckpoint,
+    HITLNotifier,
+    SlackNotifier,
+    TelegramNotifier,
+    WebhookNotifier,
+    CLINotifier,
+    EmailNotifier,
+    HITLServer,
+    ApprovalRequest,
+    ApprovalResult,
+    ApprovalStatus,
+    RiskLevel,
+    HITLDeniedError,
+    HITLTimeoutError,
+    classify_action,
+    create_checkpoint,
+    HIGH_RISK_ACTIONS,
+    CRITICAL_ACTIONS,
+)
 
 # Memory Integrity Ledger (v0.5.5)
 from memgar.memory_ledger import (
