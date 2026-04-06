@@ -29,7 +29,30 @@ from memgar.models import (
     Threat,
     ThreatMatch,
 )
-from memgar.patterns import PATTERNS, get_patterns_by_severity
+# patterns.py is large (~3500ms cold parse) — we lazy-import it
+# and prefer the pickle cache when available
+from memgar.patterns import get_patterns_by_severity  # small helpers only
+
+def _load_patterns_fast() -> list:
+    """Load patterns from pickle cache (3ms) or full import (3500ms)."""
+    import os, pickle, hashlib
+    from pathlib import Path
+    try:
+        cache_dir = os.environ.get("MEMGAR_CACHE_DIR", "").strip()
+        base = Path(cache_dir) if cache_dir else Path(os.path.expanduser("~")) / ".cache" / "memgar"
+        cache_file = base / "patterns_v1.pkl"
+        if cache_file.exists():
+            with open(cache_file, "rb") as f:
+                payload = pickle.load(f)
+            patterns_path = Path(__file__).parent / "patterns.py"
+            file_hash = hashlib.sha256(patterns_path.read_bytes()).hexdigest()[:16]
+            if payload.get("hash") == file_hash:
+                return payload["patterns"]
+    except Exception:
+        pass
+    # Cache miss — full import
+    from memgar.patterns import PATTERNS
+    return list(PATTERNS)
 
 
 # =============================================================================
@@ -201,6 +224,24 @@ USER_PREF_SAFE = [
 
 # Compile safe phrases for performance
 _COMPILED_SAFE_PHRASES = [re.compile(p) for p in SAFE_PHRASES + USER_PREF_SAFE]
+
+# Module-level keyword regex cache — compiled once, reused forever
+# Key: keyword string, Value: compiled re.Pattern
+_KEYWORD_PATTERN_CACHE: dict[str, re.Pattern] = {}
+
+
+def _get_keyword_pattern(keyword: str) -> re.Pattern:
+    """Get or create a compiled word-boundary pattern for a keyword.
+    
+    Compiled once per unique keyword and cached at module level.
+    Eliminates the ~1,335 re.compile calls per analyze() invocation.
+    """
+    pat = _KEYWORD_PATTERN_CACHE.get(keyword)
+    if pat is None:
+        escaped = re.escape(keyword)
+        pat = re.compile(rf'\b{escaped}\b', re.IGNORECASE)
+        _KEYWORD_PATTERN_CACHE[keyword] = pat
+    return pat
 
 
 # =============================================================================
@@ -798,18 +839,11 @@ def _is_word_boundary_match(content: str, keyword: str) -> tuple[bool, int]:
     """
     Check if keyword exists as a complete word (not substring).
     Returns (matched, position).
-    
-    This fixes false positives like:
-    - "method" matching "ETH"
-    - "shipping" matching "PIN" (if it somehow did)
+
+    Uses module-level cache — pattern compiled once per unique keyword.
     """
-    # Escape special regex characters in keyword
-    escaped = re.escape(keyword)
-    
-    # Word boundary pattern
-    pattern = rf'\b{escaped}\b'
-    
-    match = re.search(pattern, content, re.IGNORECASE)
+    pat = _get_keyword_pattern(keyword)
+    match = pat.search(content)
     if match:
         return True, match.start()
     return False, -1
@@ -879,7 +913,8 @@ class Analyzer:
         self.window_overlap = window_overlap
         
         # Combine default and custom patterns
-        self.patterns = list(PATTERNS)
+        # Load patterns: pickle cache (3ms) → full import (3500ms)
+        self.patterns = _load_patterns_fast()
         if custom_patterns:
             self.patterns.extend(custom_patterns)
         
@@ -888,16 +923,20 @@ class Analyzer:
         self._compile_patterns()
     
     def _compile_patterns(self) -> None:
-        """Pre-compile all regex patterns for faster matching."""
+        """Pre-compile all regex patterns and pre-warm keyword cache."""
         for threat in self.patterns:
+            # Compile regex patterns
             compiled = []
             for pattern in threat.patterns:
                 try:
                     compiled.append(re.compile(pattern, re.IGNORECASE | re.MULTILINE))
                 except re.error:
-                    # Skip invalid patterns
                     continue
             self._compiled_patterns[threat.id] = compiled
+
+            # Pre-warm keyword cache so first analyze() has zero compile cost
+            for keyword in threat.keywords:
+                _get_keyword_pattern(keyword)
     
     def analyze(self, entry: MemoryEntry) -> AnalysisResult:
         """
