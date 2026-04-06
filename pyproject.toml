@@ -1,0 +1,143 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "memgar"
+version = "0.5.3"
+description = "AI Agent Memory Security — Detect and prevent memory poisoning, DoW attacks, and forensic analysis for AI agents"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Selcuk", email = "hello@memgar.io" }
+]
+keywords = [
+    "ai-security", "llm-security", "agent-security", "memory-poisoning",
+    "prompt-injection", "denial-of-wallet", "dow", "forensics",
+    "langchain", "llamaindex", "crewai", "autogen", "mcp",
+    "rag-security", "owasp", "asi06", "memory-guard",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "click>=8.0.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+semantic = [
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.21.0",
+]
+llm = [
+    "anthropic>=0.18.0",
+    "openai>=1.0.0",
+]
+langchain = [
+    "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+    "langchain-community>=0.0.10",
+]
+llamaindex = [
+    "llama-index-core>=0.10.0",
+]
+crewai = [
+    "crewai>=0.1.0",
+]
+autogen = [
+    "pyautogen>=0.2.0",
+]
+watch = [
+    "watchdog>=3.0.0",
+]
+agents = [
+    "memgar[langchain,crewai,autogen]",
+]
+rag = [
+    "memgar[langchain,llamaindex]",
+]
+all = [
+    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch]",
+]
+
+[project.scripts]
+memgar = "memgar.cli:main"
+
+[project.urls]
+Homepage = "https://memgar.io"
+Documentation = "https://docs.memgar.io"
+Repository = "https://github.com/slck-tor/memgar"
+Issues = "https://github.com/slck-tor/memgar/issues"
+Changelog = "https://github.com/slck-tor/memgar/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["memgar"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/memgar",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312", "py313"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W", "B", "Q"]
+ignore = ["E501"]
+
+[tool.ruff.isort]
+known-first-party = ["memgar"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["memgar"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
