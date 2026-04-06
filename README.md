@@ -331,7 +331,7 @@ MIT — see [LICENSE](LICENSE)
 
 ## Links
 
-- 🌐 Website: [memgar.io](https://memgar.io)
+- 🌐 Website: [memgar.io](https://memgar.com)
 - 📦 PyPI: [pypi.org/project/memgar](https://pypi.org/project/memgar/)
 - 🐙 GitHub: [github.com/slck-tor/memgar](https://github.com/slck-tor/memgar)
 - 📖 Docs: [docs.memgar.io](https://docs.memgar.io)
