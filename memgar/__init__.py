@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.3"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -220,6 +220,75 @@ from memgar.core import (
     ThreatScanner,
 )
 
+# Denial of Wallet detection (v0.5.2)
+try:
+    from memgar.dow import (
+        DoWDetector,
+        DoWGuard,
+        DoWRateLimiter,
+        DoWSessionMonitor,
+        DoWAnalysisResult,
+        DoWMatch,
+        DoWRisk,
+        DoWTrigger,
+        DoWAttackDetected,
+        DoWThrottleError,
+        DoWBudgetExhaustedError,
+        SessionBudgetStats,
+        RateLimitStatus,
+        create_dow_guard,
+    )
+    _DOW_AVAILABLE = True
+except ImportError:
+    _DOW_AVAILABLE = False
+
+# Memory Forensics (v0.5.1)
+try:
+    from memgar.forensics import (
+        MemoryForensicsEngine,
+        ForensicReport,
+        ForensicEntry,
+        PoisonEvent,
+        PoisonSeverity,
+        MemoryCleanser,
+        SkillFileScanner,
+    )
+    _FORENSICS_AVAILABLE = True
+except ImportError:
+    _FORENSICS_AVAILABLE = False
+
+# Framework deep integrations (v0.5.0)
+try:
+    from memgar.frameworks import (
+        MemgarSecurityRunnable,
+        MemgarChatMemory,
+        MemgarConversationBufferMemory,
+        SecureVectorStoreRetriever,
+        MemgarLCELMiddleware,
+        MemgarDocumentFilter,
+        create_secure_lcel_chain,
+        MemgarQueryEngineSecurity,
+        MemgarIndexSecurity,
+        MemgarStorageContextSecurity,
+        SecureVectorIndexRetriever,
+        MemgarIngestionPipelineSecurity,
+        MemgarNodeFilter,
+        create_secure_query_pipeline,
+    )
+    _FRAMEWORKS_AVAILABLE = True
+except ImportError:
+    _FRAMEWORKS_AVAILABLE = False
+
+
+# Auto-protect (v0.5.3)
+from memgar.auto_protect import (
+    auto_protect,
+    auto_protect_off,
+    get_status as auto_protect_status,
+    AutoProtectConfig,
+    AutoProtectStatus,
+    reset_stats as auto_protect_reset_stats,
+)
 
 # =============================================================================
 # MAIN CLIENT CLASS
@@ -516,4 +585,52 @@ __all__ = [
     "AhoCorasick",
     "PatternMatcher",
     "ThreatScanner",
+
+    # Framework Deep Integrations (v0.5.0)
+    "MemgarSecurityRunnable",
+    "MemgarChatMemory",
+    "MemgarConversationBufferMemory",
+    "SecureVectorStoreRetriever",
+    "MemgarLCELMiddleware",
+    "MemgarDocumentFilter",
+    "create_secure_lcel_chain",
+    "MemgarQueryEngineSecurity",
+    "MemgarIndexSecurity",
+    "MemgarStorageContextSecurity",
+    "SecureVectorIndexRetriever",
+    "MemgarIngestionPipelineSecurity",
+    "MemgarNodeFilter",
+    "create_secure_query_pipeline",
+
+    # Memory Forensics (v0.5.1)
+    "MemoryForensicsEngine",
+    "ForensicReport",
+    "ForensicEntry",
+    "PoisonEvent",
+    "PoisonSeverity",
+    "MemoryCleanser",
+    "SkillFileScanner",
+
+    # Auto-Protect (v0.5.3)
+    "auto_protect",
+    "auto_protect_off",
+    "auto_protect_status",
+    "AutoProtectConfig",
+    "AutoProtectStatus",
+
+    # Denial of Wallet Detection (v0.5.2)
+    "DoWDetector",
+    "DoWGuard",
+    "DoWRateLimiter",
+    "DoWSessionMonitor",
+    "DoWAnalysisResult",
+    "DoWMatch",
+    "DoWRisk",
+    "DoWTrigger",
+    "DoWAttackDetected",
+    "DoWThrottleError",
+    "DoWBudgetExhaustedError",
+    "SessionBudgetStats",
+    "RateLimitStatus",
+    "create_dow_guard",
 ]
