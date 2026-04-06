@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.4"
+__version__ = "0.5.5"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -279,6 +279,20 @@ try:
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
+
+# Memory Integrity Ledger (v0.5.5)
+from memgar.memory_ledger import (
+    MemoryLedger,
+    LedgerEntry,
+    LedgerReport,
+    LedgerVerifier,
+    LedgerForensicsIntegration,
+    TamperEvent,
+    EntryStatus,
+    create_ledger,
+    verify_ledger,
+    GENESIS_HASH,
+)
 
 # WebSocket Guard (v0.5.4)
 from memgar.websocket_guard import (
