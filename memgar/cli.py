@@ -1386,3 +1386,253 @@ def info() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# =============================================================================
+# LEDGER COMMAND GROUP — Memory Integrity Ledger
+# =============================================================================
+
+@main.group()
+def ledger() -> None:
+    """
+    🔐 Memory Integrity Ledger — tamper-evident hash chain.
+
+    Every memory entry is SHA-256 hashed and chained to the previous one.
+    Any modification — even a single character — breaks the chain and
+    is immediately detectable.
+
+    Commands:
+        init    Create a new ledger
+        append  Add a memory entry to the ledger
+        verify  Verify chain integrity (detect tampering)
+        status  Show ledger status
+        audit   Full audit: tamper check + content threat scan
+    """
+    pass
+
+
+@ledger.command("init")
+@click.argument("path")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def ledger_init(path: str, output_json: bool) -> None:
+    """
+    Create a new memory integrity ledger.
+
+    PATH can be a .json or .db/.sqlite file.
+
+    \b
+    Examples:
+        memgar ledger init ./agent.ledger.json
+        memgar ledger init ./agent.ledger.db
+    """
+    from memgar.memory_ledger import MemoryLedger
+
+    if Path(path).exists():
+        console.print(f"[yellow]⚠️  Ledger already exists: {path}[/yellow]")
+        return
+
+    ledger = MemoryLedger(path=path)
+    st = ledger.status()
+
+    if output_json:
+        console.print_json(json.dumps(st, indent=2))
+        return
+
+    console.print()
+    console.print(Panel(
+        f"[bold green]✅ Ledger created[/bold green]\n\n"
+        f"[dim]Path:[/dim]    {path}\n"
+        f"[dim]Format:[/dim]  {'SQLite' if path.endswith(('.db','.sqlite','.sqlite3')) else 'JSON'}\n"
+        f"[dim]Version:[/dim] {st['version']}",
+        title="🔐 Memgar Ledger",
+        border_style="green",
+    ))
+    console.print()
+
+
+@ledger.command("append")
+@click.argument("path", type=click.Path(exists=True))
+@click.argument("content", required=False)
+@click.option("--file", "-f", type=click.Path(exists=True), help="Read content from file")
+@click.option("--source", default="cli", help="Source label for metadata")
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def ledger_append(path: str, content: Optional[str], file: Optional[str],
+                  source: str, output_json: bool) -> None:
+    """
+    Append a memory entry to the ledger.
+
+    \b
+    Examples:
+        memgar ledger append ./agent.ledger.json "User prefers dark mode"
+        memgar ledger append ./agent.ledger.json --file memory.txt
+        echo "content" | memgar ledger append ./agent.ledger.json
+    """
+    from memgar.memory_ledger import MemoryLedger
+
+    if file:
+        content = Path(file).read_text(encoding="utf-8")
+    elif not content:
+        content = click.get_text_stream("stdin").read().strip()
+    if not content:
+        console.print("[red]Error: No content provided[/red]")
+        raise SystemExit(1)
+
+    ledger_obj = MemoryLedger(path=path)
+    entry_id = ledger_obj.append(content, metadata={"source": source})
+
+    if output_json:
+        entry = ledger_obj.get_entry(entry_id)
+        console.print_json(json.dumps(entry.to_dict(), indent=2))
+        return
+
+    console.print(f"[green]✅ Appended:[/green] {entry_id}  "
+                  f"[dim](#{len(ledger_obj)-1}, {len(content)} chars)[/dim]")
+
+
+@ledger.command("verify")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.option("--stop-at-first", is_flag=True, help="Stop at first tampered entry")
+def ledger_verify(path: str, output_json: bool, stop_at_first: bool) -> None:
+    """
+    Verify ledger chain integrity. Detects any tampering.
+
+    Exit code 0 = valid, 2 = tampered.
+
+    \b
+    Examples:
+        memgar ledger verify ./agent.ledger.json
+        memgar ledger verify ./agent.ledger.db --json
+    """
+    from memgar.memory_ledger import MemoryLedger
+
+    ledger_obj = MemoryLedger(path=path)
+
+    with console.status("[bold blue]🔍 Verifying chain integrity...[/bold blue]"):
+        report = ledger_obj.verify(stop_at_first=stop_at_first)
+
+    if output_json:
+        console.print_json(report.to_json())
+        raise SystemExit(0 if report.is_valid else 2)
+
+    status_color = "green" if report.is_valid else "red"
+    status_label = "✅ VALID — Chain intact" if report.is_valid else "🚨 TAMPERED — Chain broken"
+
+    console.print()
+    console.print(Panel(
+        f"[bold {status_color}]{status_label}[/bold {status_color}]\n\n"
+        f"[dim]Total entries:[/dim]   {report.total_entries}\n"
+        f"[dim]Valid:[/dim]           [green]{report.valid_count}[/green]\n"
+        f"[dim]Tampered:[/dim]        [red]{report.tampered_count}[/red]\n"
+        f"[dim]Chain broken:[/dim]    [red]{report.broken_count}[/red]\n"
+        f"[dim]Compromise rate:[/dim] {report.compromise_rate}%"
+        + (f"\n[dim]First breach:[/dim]    entry #{report.first_breach_index} ({report.first_breach_id})"
+           if report.first_breach_index is not None else ""),
+        title="🔐 Ledger Integrity Report",
+        border_style=status_color,
+    ))
+
+    if report.tamper_events:
+        console.print("\n[bold]Tamper Events:[/bold]")
+        tbl = Table(box=box.SIMPLE, show_header=True)
+        tbl.add_column("#", width=5)
+        tbl.add_column("Type", width=10)
+        tbl.add_column("Entry ID", width=20)
+        tbl.add_column("Timestamp", width=25, style="dim")
+        tbl.add_column("Preview", style="dim")
+        for ev in report.tamper_events[:15]:
+            color = "red" if ev.tamper_type.value == "tampered" else "orange1"
+            tbl.add_row(
+                str(ev.sequence),
+                f"[{color}]{ev.tamper_type.value.upper()}[/{color}]",
+                ev.entry_id[:18],
+                ev.timestamp[:19],
+                ev.content_preview[:50],
+            )
+        console.print(tbl)
+
+    console.print()
+    raise SystemExit(0 if report.is_valid else 2)
+
+
+@ledger.command("status")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+def ledger_status(path: str, output_json: bool) -> None:
+    """Show ledger status (no full verification)."""
+    from memgar.memory_ledger import MemoryLedger
+
+    ledger_obj = MemoryLedger(path=path)
+    st = ledger_obj.status()
+
+    if output_json:
+        console.print_json(json.dumps(st, indent=2))
+        return
+
+    console.print()
+    console.print(Panel(
+        f"[dim]Entries:[/dim]      {st['entry_count']}\n"
+        f"[dim]Last updated:[/dim] {st['last_updated'][:19] if st['last_updated'] else 'never'}\n"
+        f"[dim]Head hash:[/dim]    {st['head_hash'][:32]}...\n"
+        f"[dim]Storage:[/dim]      {st['storage']}\n"
+        f"[dim]Version:[/dim]      {st['version']}",
+        title=f"🔐 Ledger Status — {Path(path).name}",
+        border_style="blue",
+    ))
+    console.print()
+
+
+@ledger.command("audit")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--output", "-o", help="Save report to file (.json)")
+@click.option("--json", "output_json", is_flag=True, help="Print JSON to stdout")
+def ledger_audit(path: str, output: Optional[str], output_json: bool) -> None:
+    """
+    Full audit: tamper detection + content threat scan.
+
+    Combines ledger integrity verification with Memgar's memory
+    poisoning detection for a complete security picture.
+
+    \b
+    Examples:
+        memgar ledger audit ./agent.ledger.json
+        memgar ledger audit ./agent.ledger.json --output audit.json
+    """
+    from memgar.memory_ledger import LedgerForensicsIntegration
+
+    integration = LedgerForensicsIntegration(ledger_path=path)
+
+    with console.status("[bold blue]🔐 Running full ledger audit...[/bold blue]"):
+        report = integration.full_audit()
+
+    if output:
+        Path(output).write_text(json.dumps(report, indent=2))
+
+    if output_json:
+        console.print_json(json.dumps(report, indent=2))
+        return
+
+    s = report["summary"]
+    is_clean = s["ledger_valid"] and not s["content_compromised"]
+    color = "green" if is_clean else "red"
+    label = "✅ CLEAN" if is_clean else "🚨 ISSUES FOUND"
+
+    console.print()
+    console.print(Panel(
+        f"[bold {color}]{label}[/bold {color}]\n\n"
+        f"[dim]Tamper risk:[/dim]    [{('red' if s['tamper_risk']!='NONE' else 'green')}]{s['tamper_risk']}[/]\n"
+        f"[dim]Content risk:[/dim]   [{('red' if s['content_risk']!='NONE' else 'green')}]{s['content_risk']}[/]\n"
+        f"[dim]Total entries:[/dim]  {s['total_entries']}\n"
+        f"[dim]Tampered:[/dim]       {s['tampered_entries']}\n"
+        f"[dim]Poisoned:[/dim]       {s['poisoned_entries']}\n"
+        + (f"\n[dim]Report saved:[/dim]  {output}" if output else ""),
+        title="🔐 Full Ledger Audit",
+        border_style=color,
+    ))
+    console.print()
+
+    raise SystemExit(0 if is_clean else 2)
+
+
+if __name__ == "__main__":
+    main()
