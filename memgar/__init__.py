@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.7"
+__version__ = "0.5.8"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -279,6 +279,19 @@ try:
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
+
+# Supply Chain Scanner (v0.5.8)
+from memgar.supply import (
+    SupplyChainScanner,
+    SupplyScanReport,
+    SupplyFinding,
+    FindingSeverity,
+    FindingType,
+    KNOWN_MALICIOUS,
+    scan_directory as supply_scan_directory,
+    scan_file as supply_scan_file,
+    check_package as supply_check_package,
+)
 
 # Self-Learning Pattern System (v0.5.7)
 from memgar.learning import (
