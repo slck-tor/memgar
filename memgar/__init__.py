@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.6"
+__version__ = "0.5.7"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -280,6 +280,20 @@ except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
 
+# Self-Learning Pattern System (v0.5.7)
+from memgar.learning import (
+    PatternLearner,
+    PatternCandidate,
+    PatternStore,
+    GapDetector,
+    FalsePositive,
+    LearningStats,
+    ReviewDecision,
+    PatternSource,
+    create_learner,
+    scan_for_gaps,
+)
+
 # HITL Checkpoint (v0.5.6)
 from memgar.hitl import (
     HITLCheckpoint,
@@ -288,6 +302,7 @@ from memgar.hitl import (
     TelegramNotifier,
     WebhookNotifier,
     CLINotifier,
+    NullNotifier,
     EmailNotifier,
     HITLServer,
     ApprovalRequest,
@@ -693,4 +708,48 @@ __all__ = [
     "SessionBudgetStats",
     "RateLimitStatus",
     "create_dow_guard",
+
+    # WebSocket Guard (v0.5.4)
+    "MemgarWebSocketGuard",
+    "WebSocketProxy",
+    "WSRateLimiter",
+    "OriginValidator",
+    "WSMessageScanner",
+    "scan_ws_message",
+
+    # Memory Integrity Ledger (v0.5.5)
+    "MemoryLedger",
+    "LedgerEntry",
+    "LedgerReport",
+    "LedgerVerifier",
+    "LedgerForensicsIntegration",
+    "TamperEvent",
+    "EntryStatus",
+    "create_ledger",
+    "verify_ledger",
+    "GENESIS_HASH",
+
+    # HITL Checkpoint (v0.5.6)
+    "HITLCheckpoint",
+    "SlackNotifier",
+    "TelegramNotifier",
+    "WebhookNotifier",
+    "CLINotifier",
+    "NullNotifier",
+    "EmailNotifier",
+    "HITLDeniedError",
+    "HITLTimeoutError",
+    "classify_action",
+    "create_checkpoint",
+    "ApprovalStatus",
+    "RiskLevel",
+    "HIGH_RISK_ACTIONS",
+    "CRITICAL_ACTIONS",
+
+    # Auto-Protect (v0.5.3)
+    "auto_protect",
+    "auto_protect_off",
+    "auto_protect_status",
+    "AutoProtectConfig",
+    "AutoProtectStatus",
 ]
