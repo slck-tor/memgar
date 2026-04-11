@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.10"
+__version__ = "0.5.11"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -279,6 +279,14 @@ try:
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
+
+# EU AI Act Compliance (v0.5.11)
+from memgar.compliance import (
+    EUAIActReport,
+    ComplianceCheck,
+    ComplianceStatus,
+    RiskClassification,
+)
 
 # SIEM Integration (v0.5.10)
 from memgar.siem import (
