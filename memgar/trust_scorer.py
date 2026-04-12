@@ -138,8 +138,9 @@ class TrustContext:
     agent_id:      Optional[str] = None   # hangi agent
     principal:     Optional[str] = None   # kim tetikledi
     timestamp:     float = field(default_factory=time.time)
-    is_internal:   bool = False            # dahili sistem mi?
-    is_verified:   bool = False            # kriptografik doğrulama var mı?
+    is_internal:   bool = False
+    is_verified:   bool = False
+    agent_type:    Optional[str] = None    # agent domain type for mismatch detection
     extra:         Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -424,20 +425,45 @@ class _S4_AnomalyScore:
         (re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]"), "zero-width/invisible chars", 40),
     ]
 
-    def compute(self, content: str, _ctx: TrustContext) -> SignalResult:
+    def compute(self, content: str, ctx: TrustContext) -> SignalResult:
         if not content:
             return self._neutral()
 
         penalty = 0
         evidence = []
+        is_critical = False
+
+        # Pattern-based anomaly checks
         for pat, label, cost in self._ANOMALY_PATTERNS:
             if pat.search(content):
                 penalty += cost
                 evidence.append(label)
+                if cost >= 40:
+                    is_critical = True
+
+        # Domain mismatch detection (when agent_type declared in context)
+        if ctx.agent_type:
+            try:
+                from memgar.domain_detector import build_detector, mismatch_to_trust_penalty
+                detector = build_detector(ctx.agent_type)
+                domain_result = detector.check(content)
+                domain_penalty = mismatch_to_trust_penalty(domain_result)
+                if domain_penalty > 0:
+                    penalty += int(domain_penalty)
+                    evidence.append(f"domain_mismatch={domain_result.mismatch_score:.2f}")
+                    if domain_result.is_forbidden:
+                        evidence.extend([f"forbidden:{d}" for d in domain_result.forbidden_hit[:2]])
+                        is_critical = True
+                    if domain_result.authority_confusion:
+                        evidence.append("authority_confusion")
+                        is_critical = True
+            except Exception:
+                pass  # domain_detector unavailable — skip
+
+        if penalty >= 40:
+            is_critical = True
 
         trust = max(0, 100 - penalty)
-        is_critical = penalty >= 40
-
         detail = f"Anomaly penalty: {penalty}, flags: {evidence}"
         return SignalResult(
             name=SignalName.ANOMALY_SCORE,
