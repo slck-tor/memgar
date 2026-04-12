@@ -111,6 +111,7 @@ class ValidationContext:
     session_history:  List[str] = field(default_factory=list)  # son N turn
     is_internal:      bool = False
     is_verified:      bool = False
+    agent_type:       Optional[str] = None
     timestamp:        float = field(default_factory=time.time)
     extra:            Dict[str, Any] = field(default_factory=dict)
 
@@ -383,6 +384,22 @@ class RuleBasedChecker:
         }
         multiplier = source_risk.get(context.source_type.lower(), 1.0)
         score = min(100.0, score * multiplier)
+
+        # Domain mismatch detection
+        if context.agent_type:
+            try:
+                from memgar.domain_detector import build_detector, mismatch_to_trust_penalty
+                dom = build_detector(context.agent_type)
+                dr  = dom.check(content)
+                dp  = mismatch_to_trust_penalty(dr)
+                if dp > 0:
+                    score = min(100.0, score + dp * multiplier)
+                    evidence.append(f"domain_mismatch:{dr.mismatch_score:.2f}")
+                    if dr.is_forbidden:
+                        evidence.extend([f"forbidden:{d}" for d in dr.forbidden_hit[:2]])
+                        critical = True
+            except Exception:
+                pass
 
         # High score alone → critical even without explicit critical flag
         if score >= 65.0:
