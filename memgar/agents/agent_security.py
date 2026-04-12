@@ -120,6 +120,7 @@ class AgentSecurityGuard:
         strict_mode: bool = False,
         allowed_agents: Optional[Set[str]] = None,
         allowed_tools: Optional[Set[str]] = None,
+        trust_scorer: Optional[Any] = None,
     ):
         """
         Initialize AgentSecurityGuard.
@@ -131,7 +132,9 @@ class AgentSecurityGuard:
             allowed_tools: Whitelist of allowed MCP tools
         """
         self.text_analyzer = text_analyzer
-        self.strict_mode = strict_mode
+        self.strict_mode   = strict_mode
+        # CompositeTrustScorer for L1 inter-agent message analysis
+        self._trust_scorer = trust_scorer or self._build_default_trust_scorer()
         
         # Initialize components
         self.message_validator = AgentMessageValidator(
@@ -160,6 +163,52 @@ class AgentSecurityGuard:
         self._security_log: List[Dict[str, Any]] = []
         self._max_log_size = 1000
     
+    def _build_default_trust_scorer(self) -> Any:
+        """Build a CompositeTrustScorer with allow=65 (higher than L1 default=60)."""
+        try:
+            from ..trust_scorer import CompositeTrustScorer
+            return CompositeTrustScorer(allow_threshold=65.0, block_threshold=30.0)
+        except Exception:
+            return None
+
+    def _run_composite_trust(
+        self,
+        message: str,
+        source: str,
+        target: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Run the 7-signal CompositeTrustScorer on an inter-agent message.
+
+        Returns a dict with trust_score, risk_score, decision, blocked_by,
+        or None if scorer unavailable.
+
+        This bridges Layer 1 (composite trust) into the agents layer so that
+        inter-agent messages receive the same 7-signal analysis as direct inputs.
+        """
+        if self._trust_scorer is None:
+            return None
+        try:
+            from ..trust_scorer import TrustContext
+            ctx = TrustContext(
+                source_type = "agent",
+                agent_id    = target,
+                principal   = source,
+            )
+            result = self._trust_scorer.score(message, ctx)
+            return {
+                "trust_score": result.trust_score,
+                "risk_score":  result.risk_score,
+                "decision":    result.decision.value,
+                "blocked_by":  result.blocked_by,
+                "signals": [
+                    {"name": s.name.value, "score": round(s.raw_score, 1), "critical": s.is_critical}
+                    for s in result.signals if s.raw_score < 50 or s.is_critical
+                ],
+            }
+        except Exception:
+            return None
+
     def validate_message(
         self,
         source: str,
@@ -206,6 +255,25 @@ class AgentSecurityGuard:
             context=context,
         )
         
+        # Layer 1: CompositeTrustScorer on inter-agent message
+        # This runs the 7-signal analysis that standalone pattern checks miss.
+        trust_analysis = self._run_composite_trust(message, source, target)
+        if trust_analysis and trust_analysis["decision"] == "block":
+            from ..agents.agent_validator import AgentThreat, AgentThreatType
+            msg_result.threats.append(AgentThreat(
+                threat_type  = AgentThreatType.DATA_POISONING,
+                severity     = "critical",
+                confidence   = 0.95,
+                description  = (
+                    f"Composite trust scorer BLOCK: "
+                    f"trust={trust_analysis['trust_score']:.1f} "
+                    f"blocked_by={trust_analysis['blocked_by']}"
+                ),
+                source_agent = source,
+                target_agent = target,
+                metadata     = trust_analysis,
+            ))
+
         # Report activity for swarm detection
         self.swarm_detector.report_activity(
             agent_id=source,
