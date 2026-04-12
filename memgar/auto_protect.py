@@ -79,6 +79,13 @@ class AutoProtectConfig:
     on_threat: Optional[Callable] = None        # fn(content, result)
     on_dow: Optional[Callable] = None           # fn(content, result)
     on_budget_warning: Optional[Callable] = None  # fn(session_id, cost)
+    on_deviation: Optional[Callable] = None     # fn(DeviationReport) on behavioral anomaly
+
+    # Behavioral baseline (Layer 4)
+    enable_baseline: bool = True                # learn normal behavior, detect deviations
+    baseline_alpha: float = 0.02               # EWM smoothing (lower = slower adaptation)
+    baseline_window: float = 300.0             # observation window in seconds
+    baseline_auto_trip: bool = True            # trip circuit breaker on CRITICAL deviation
 
     # Session
     session_id: str = "memgar-auto"
@@ -99,6 +106,8 @@ class _State:
     requests_scanned: int = 0
     _analyzer = None
     _dow_guard = None
+    _baseline = None
+    _baseline_hooks = None
 
     @classmethod
     def get_analyzer(cls):
@@ -106,6 +115,24 @@ class _State:
             from memgar.analyzer import Analyzer
             cls._analyzer = Analyzer()
         return cls._analyzer
+
+    @classmethod
+    def get_baseline(cls):
+        if cls._baseline is None and (cls.config and cls.config.enable_baseline):
+            from memgar.behavioral_baseline import create_baseline
+            from memgar.circuit_breaker import CircuitBreaker
+            cfg = cls.config or AutoProtectConfig()
+            # Wire circuit breaker as auto-trip target on CRITICAL
+            breaker = CircuitBreaker() if cfg.baseline_auto_trip else None
+            on_dev = cfg.on_deviation
+            cls._baseline, cls._baseline_hooks = create_baseline(
+                agent_id           = cfg.session_id,
+                observation_window = cfg.baseline_window,
+                alpha              = cfg.baseline_alpha,
+                auto_trip_breaker  = breaker,
+                on_deviation       = on_dev,
+            )
+        return cls._baseline, cls._baseline_hooks
 
     @classmethod
     def get_dow_guard(cls):
@@ -147,6 +174,19 @@ def _scan_content(content: str, source: str = "auto") -> bool:
         entry = MemoryEntry(content=content, source_type=source)
         result = analyzer.analyze(entry)
 
+        # Feed behavioral baseline regardless of decision
+        try:
+            _, hooks = _state.get_baseline()
+            if hooks:
+                hooks.on_scan(
+                    risk_score   = result.risk_score,
+                    decision     = result.decision.value,
+                    threat_count = len(result.threats),
+                    threat_ids   = [t.threat.id for t in result.threats],
+                )
+        except Exception:
+            pass
+
         if result.decision != Decision.ALLOW:
             _state.threats_detected += 1
             threat_names = [t.threat.name for t in result.threats[:3]]
@@ -179,6 +219,30 @@ def _scan_content(content: str, source: str = "auto") -> bool:
         if "MemgarThreatError" in type(e).__name__ or "ThreatError" in type(e).__name__:
             raise
         logger.debug("[Memgar Auto] Scan error (non-fatal): %s", e)
+
+    # Periodic baseline check — emit to SIEM if deviation detected
+    try:
+        baseline, _ = _state.get_baseline()
+        if baseline and baseline._check_count % 20 == 0 and baseline._check_count > 0:
+            from memgar.behavioral_baseline import DeviationLevel
+            report = baseline.check()
+            if report.level in (DeviationLevel.SUSPICIOUS, DeviationLevel.CRITICAL):
+                try:
+                    from memgar.siem import SIEMEvent, EventCategory
+                    event = SIEMEvent(
+                        category  = EventCategory.AUTO_PROTECT_BLOCK,
+                        severity  = "critical" if report.level == DeviationLevel.CRITICAL else "high",
+                        message   = f"Behavioral deviation: {report.level.value} (score={report.composite_score:.1f})",
+                        agent_id  = baseline.agent_id,
+                        risk_score = int(min(100, report.composite_score * 10)),
+                        action    = "detected",
+                        extra     = {"deviation_report": report.to_dict()},
+                    )
+                    logger.warning("[Memgar Baseline] %s", event.message)
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     return True
 
