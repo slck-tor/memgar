@@ -53,6 +53,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections import defaultdict, deque
@@ -60,6 +61,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +373,13 @@ class BehavioralBaseline:
 
     def __init__(
         self,
-        agent_id:           str = "default",
-        observation_window: float = 300.0,
-        alpha:              float = 0.02,
-        on_deviation:       Optional[Callable[[DeviationReport], None]] = None,
-        auto_trip_breaker:  Optional[Any] = None,
+        agent_id:             str = "default",
+        observation_window:   float = 300.0,
+        alpha:                float = 0.02,
+        on_deviation:         Optional[Callable[[DeviationReport], None]] = None,
+        auto_trip_breaker:    Optional[Any] = None,
+        forensics_path:       Optional[str] = None,
+        retrain_interval_secs: float = 3600.0,
     ) -> None:
         self.agent_id    = agent_id
         self._window     = observation_window
@@ -397,6 +402,15 @@ class BehavioralBaseline:
         # Freeze flag: once True, new observations do NOT update EWM
         # This prevents attack observations from shifting the learned baseline
         self._frozen = False
+
+        # Forensics auto-trigger: path to memory store scanned on CRITICAL
+        self._forensics_path   = forensics_path
+        self._last_forensics:  Optional[float] = None  # ts of last investigation
+        self._forensics_cooldown = 300.0  # min seconds between auto-invocations
+
+        # Retrain scheduler: drift with legitimate behavior change
+        self._retrain_interval = retrain_interval_secs
+        self._last_retrain:    float = time.time()
 
         # Stats
         self._check_count = 0
@@ -577,6 +591,30 @@ class BehavioralBaseline:
             except Exception:
                 pass
 
+        # Forensics auto-trigger on CRITICAL
+        # Schneider: "when an agent starts defending beliefs it should never have
+        # learned, quarantine that agent" — start forensic investigation immediately.
+        if overall == DeviationLevel.CRITICAL and self._forensics_path is not None:
+            now_ts = time.time()
+            if (self._last_forensics is None or
+                    now_ts - self._last_forensics >= self._forensics_cooldown):
+                self._last_forensics = now_ts
+                self._trigger_forensics(report)
+
+        # Retrain scheduler: periodically unfreeze baseline so it can
+        # drift with legitimate behavioral change (new project, new user prefs).
+        # Only runs when NOT in an attack — level must be NORMAL or ELEVATED.
+        if overall in (DeviationLevel.NORMAL, DeviationLevel.ELEVATED):
+            now_ts = time.time()
+            if now_ts - self._last_retrain >= self._retrain_interval:
+                self._last_retrain = now_ts
+                self.retrain()
+                logger.info(
+                    "[Baseline] Scheduled retrain completed for agent=%s "
+                    "(interval=%.0fs)",
+                    self.agent_id, self._retrain_interval,
+                )
+
         return report
 
     # ── Baseline management ──────────────────────────────────────────────────
@@ -600,6 +638,61 @@ class BehavioralBaseline:
             for name, bl in self._baselines.items()
             if bl.count > 0
         }
+
+    def _trigger_forensics(self, report: "DeviationReport") -> None:
+        """
+        Auto-trigger memory forensics investigation on CRITICAL deviation.
+
+        Loads MemoryForensicsEngine from memgar.forensics and scans the
+        configured forensics_path. The report is attached as context.
+
+        Runs in a daemon thread to avoid blocking check().
+        """
+        import threading
+
+        def _run() -> None:
+            try:
+                import importlib.util, os
+                forensics_file = os.path.join(
+                    os.path.dirname(__file__), "forensics"
+                )
+                spec = importlib.util.spec_from_file_location(
+                    "memgar.forensics", forensics_file
+                )
+                if spec is None or spec.loader is None:
+                    logger.warning("[Baseline] forensics module not loadable")
+                    return
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+
+                engine = mod.MemoryForensicsEngine()
+                forensic_report = engine.scan(
+                    path  = self._forensics_path,
+                    clean = False,
+                )
+                logger.critical(
+                    "[Baseline→Forensics] CRITICAL deviation triggered auto-investigation "
+                    "| agent=%s | composite=%.2f | compromised=%s | entries=%d",
+                    self.agent_id,
+                    report.composite_score,
+                    forensic_report.is_compromised,
+                    forensic_report.total_entries,
+                )
+                if forensic_report.is_compromised:
+                    logger.critical(
+                        "[Baseline→Forensics] %d poisoned entries found "
+                        "(%.1f%% compromise rate) in %s",
+                        forensic_report.poisoned_count,
+                        forensic_report.compromise_rate * 100,
+                        self._forensics_path,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[Baseline→Forensics] auto-investigation failed: %s", exc
+                )
+
+        t = threading.Thread(target=_run, daemon=True, name=f"memgar-forensics-{self.agent_id}")
+        t.start()
 
     def retrain(self, window_fraction: float = 1.0) -> int:
         """
@@ -835,11 +928,13 @@ def _iso(ts: Optional[float] = None) -> str:
 # ---------------------------------------------------------------------------
 
 def create_baseline(
-    agent_id:           str = "default",
-    observation_window: float = 300.0,
-    alpha:              float = 0.02,
-    auto_trip_breaker:  Optional[Any] = None,
-    on_deviation:       Optional[Callable[[DeviationReport], None]] = None,
+    agent_id:              str = "default",
+    observation_window:    float = 300.0,
+    alpha:                 float = 0.02,
+    auto_trip_breaker:     Optional[Any] = None,
+    on_deviation:          Optional[Callable[[DeviationReport], None]] = None,
+    forensics_path:        Optional[str] = None,
+    retrain_interval_secs: float = 3600.0,
 ) -> Tuple[BehavioralBaseline, BaselineIntegration]:
     """
     Create a BehavioralBaseline and its integration hooks.
@@ -854,10 +949,12 @@ def create_baseline(
         report = hooks.check()
     """
     bl = BehavioralBaseline(
-        agent_id           = agent_id,
-        observation_window = observation_window,
-        alpha              = alpha,
-        auto_trip_breaker  = auto_trip_breaker,
-        on_deviation       = on_deviation,
+        agent_id              = agent_id,
+        observation_window    = observation_window,
+        alpha                 = alpha,
+        auto_trip_breaker     = auto_trip_breaker,
+        on_deviation          = on_deviation,
+        forensics_path        = forensics_path,
+        retrain_interval_secs = retrain_interval_secs,
     )
     return bl, BaselineIntegration(bl)
