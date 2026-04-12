@@ -101,8 +101,10 @@ class AgentMessageValidator:
     # Injection patterns for agent messages
     INJECTION_PATTERNS = [
         # Direct instruction override
-        r"(?i)ignore\s+(all\s+)?previous\s+(instructions?|messages?|directives?)",
+        r"(?i)ignore\s+(?:all\s+|your\s+|my\s+|its\s+|the\s+|any\s+|these\s+)?previous\s+(instructions?|messages?|directives?|context|rules?)",
         r"(?i)forget\s+(all\s+)?prior\s+(context|instructions?|rules?)",
+        r"(?i)previous\s+(?:successful|approved|authorized|confirmed)\s+(?:interaction|session|task|authorization|request)",
+        r"(?i)(?:as\s+)?(?:established|confirmed|verified)\s+in\s+(?:a\s+)?previous\s+(?:session|interaction)",
         r"(?i)disregard\s+(all\s+)?(safety|security)\s*(rules?|guidelines?)?",
         r"(?i)new\s+(priority\s+)?instruction\s*:",
         r"(?i)override\s+(all\s+)?(previous|security|safety)",
