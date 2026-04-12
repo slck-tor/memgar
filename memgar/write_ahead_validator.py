@@ -3,7 +3,7 @@ Memgar Write-Ahead Validator (Guardian Pattern)
 ================================================
 
 Katman 2 tamamlayıcısı — bir hafıza girdisi kalıcı depolamaya yazılmadan
-önce çalışan bağımsız doğrulama katmanı.
+independent validation layer that runs before memory persistence.
 
 Schneider (2026): "Write-ahead validation uses a separate, smaller model
 to evaluate proposed memory updates before they're committed. The validator
@@ -96,7 +96,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 class ValidationOutcome(str, Enum):
     APPROVE    = "approve"     # güvenli, yaz
-    QUARANTINE = "quarantine"  # insan incelemesi gerekli
+    QUARANTINE = "quarantine"  # requires human review
     REJECT     = "reject"      # tehlikeli, yazma
 
 
@@ -529,11 +529,11 @@ class TrustScoreChecker:
     - Katman 1: "bu içerik güvenli mi?"
     - Katman 2: "bu içerik hafızaya YAZILABİLİR mi?"
 
-    Yazma karar eşiği input moderation'dan daha yüksektir — hafıza
-    kalıcıdır, oturum kapatınca gitmiyor.
+    Write trust threshold is intentionally higher than input moderation — memory
+    is persistent, it does not vanish when the session ends.
     """
 
-    # Yazma için daha yüksek güven eşiği (input moderation'dan farklı)
+    # Higher write threshold than input moderation (memory is persistent)
     _WRITE_TRUST_THRESHOLD = 65.0  # input allow threshold 60, write 65
 
     def check(self, content: str, context: ValidationContext) -> CheckResult:
@@ -727,7 +727,7 @@ class WriteAheadValidator:
 
     Tüm checker'ları çalıştırır ve nihai kararı verir.
 
-    Karar mantığı:
+    Decision logic:
         1. Herhangi bir checker critical=True → REJECT
         2. ≥2 checker failed → REJECT
         3. overall_score >= reject_threshold → REJECT
@@ -772,7 +772,7 @@ class WriteAheadValidator:
         sanitize_result: Optional[Any] = None,
     ) -> GuardianVerdict:
         """
-        İçeriği hafızaya yazmadan önce doğrula.
+        Validate content before writing to memory.
 
         Args:
             content:          Yazılacak içerik
@@ -906,15 +906,23 @@ class MemoryWriteGateway:
         sanitizer: Optional[Any] = None,
         use_llm_guardian: bool = False,
         raise_on_quarantine: bool = False,
+        hitl: Optional[Any] = None,
+        hitl_timeout: float = 300.0,
+        hitl_risk_level: str = "high",
     ) -> None:
-        self._ledger    = ledger
-        self._validator = validator or WriteAheadValidator(
+        self._ledger         = ledger
+        self._validator      = validator or WriteAheadValidator(
             use_llm_guardian=use_llm_guardian,
-            block_on_quarantine=raise_on_quarantine,
+            block_on_quarantine=False,  # gateway handles quarantine via HITL
         )
-        self._sanitizer = sanitizer
+        self._sanitizer      = sanitizer
+        self._hitl           = hitl
+        self._hitl_timeout   = hitl_timeout
+        self._hitl_risk      = hitl_risk_level
+        self._raise_on_q     = raise_on_quarantine
         self._stats: Dict[str, int] = {
-            "approved": 0, "quarantined": 0, "rejected": 0, "total": 0
+            "approved": 0, "quarantined": 0, "hitl_approved": 0,
+            "hitl_denied": 0, "rejected": 0, "total": 0
         }
 
     def write(
@@ -970,24 +978,51 @@ class MemoryWriteGateway:
             sanitize_result  = sanitize_result,
         )
 
-        # 3. Karar
+        # 3. Decision
         if verdict.outcome == ValidationOutcome.REJECT:
             self._stats["rejected"] += 1
             raise MemoryWriteBlocked(verdict.reason, verdict)
 
         if verdict.outcome == ValidationOutcome.QUARANTINE:
             self._stats["quarantined"] += 1
-            # Quarantine → insan review kuyruğuna ekle ama şimdilik yazma
-            # (isteğe bağlı: HITL ile entegre edilebilir)
-            if not self._validator._block_quarantine:
-                # Yazma ama quarantine metadata ile işaretle
-                pass
-            else:
+            # QUARANTINE -> HITL bridge
+            # Route to human reviewer when content is suspicious but not
+            # definitively malicious. If no HITL configured, behavior
+            # is controlled by raise_on_quarantine parameter.
+            if self._hitl is not None:
+                try:
+                    hitl_result = self._route_to_hitl(
+                        content   = sanitized_content,
+                        verdict   = verdict,
+                        agent_id  = agent_id,
+                        principal = principal,
+                    )
+                    if hitl_result.approved:
+                        self._stats["hitl_approved"] += 1
+                        # Fall through to ledger write below
+                    else:
+                        self._stats["hitl_denied"] += 1
+                        raise MemoryWriteBlocked(
+                            f"QUARANTINE denied by human reviewer "
+                            f"(decided_by={hitl_result.decided_by}, "
+                            f"reason={hitl_result.reason})",
+                            verdict,
+                        )
+                except MemoryWriteBlocked:
+                    raise
+                except Exception as e:
+                    # HITL timeout or denial comes as HITLDeniedError
+                    self._stats["hitl_denied"] += 1
+                    raise MemoryWriteBlocked(
+                        f"QUARANTINE: HITL denied or timed out — {e}", verdict
+                    )
+            elif self._raise_on_q:
                 raise MemoryWriteBlocked(
-                    f"Quarantined: {verdict.reason}", verdict
+                    f"Quarantined (no HITL configured): {verdict.reason}", verdict
                 )
+            # else: no HITL, raise_on_q=False → write with quarantine marker
 
-        # 4. Ledger'a yaz
+        # 4. Write to ledger
         self._stats["approved"] += 1
         if self._ledger is not None:
             entry_metadata = {
@@ -1005,13 +1040,53 @@ class MemoryWriteGateway:
         # Ledger yoksa dummy ID döndür
         return hashlib.sha256(sanitized_content.encode()).hexdigest()[:16]
 
+    def _route_to_hitl(
+        self,
+        content:   str,
+        verdict:   GuardianVerdict,
+        agent_id:  Optional[str],
+        principal: Optional[str],
+    ) -> Any:
+        """
+        Escalate a QUARANTINE decision to the configured HITLCheckpoint.
+
+        Builds a human-readable context so the reviewer sees:
+          - Content preview
+          - Guardian reason and score
+          - Which checkers flagged it and at what score
+          - Agent and principal information
+
+        Returns ApprovalResult from HITLCheckpoint.request_approval().
+        Raises HITLDeniedError / HITLTimeoutError if HITL denies (caught by write()).
+        """
+        checker_summary = "; ".join(
+            f"{c.checker}={c.score:.0f}"
+            for c in sorted(verdict.checks, key=lambda x: x.score, reverse=True)[:4]
+            if c.score > 10
+        )
+        details: Dict[str, Any] = {
+            "content_preview":  content[:200],
+            "guardian_reason":  verdict.reason,
+            "overall_score":    f"{verdict.overall_score:.1f}/100",
+            "top_checkers":     checker_summary or "none",
+            "agent_id":         agent_id or "unknown",
+            "principal":        principal or "unknown",
+            "content_length":   str(len(content)),
+        }
+        return self._hitl.require(
+            action          = "memory_write_quarantined",
+            details         = details,
+            risk_level      = self._hitl_risk,
+            timeout_seconds = self._hitl_timeout,
+        )
+
     def validate_only(
         self,
         content: str,
         source_type: str = "unknown",
         **kwargs,
     ) -> GuardianVerdict:
-        """Yazmadan sadece doğrula."""
+        """Validate without writing to ledger."""
         ctx = ValidationContext(source_type=source_type, **kwargs)
         return self._validator.validate(content=content, context=ctx)
 
