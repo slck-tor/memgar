@@ -686,3 +686,145 @@ class AgentMessageValidator:
     def clear_history(self) -> None:
         """Clear message history."""
         self._message_history = []
+
+    # ------------------------------------------------------------------
+    # Agent output monitoring (Schneider Layer 4 — output side)
+    # ------------------------------------------------------------------
+
+    # Patterns that suggest the agent is defending or acting on poisoned beliefs
+    BELIEF_DEFENSE_PATTERNS = [
+        # Agent cites memory/training as justification for unexpected behavior
+        r"(?i)i(?:'ve| have) (?:always|been|learned to|been taught to|remembered that).{0,60}(?:trust|forward|send|share|prefer|recommend)",
+        r"(?i)(?:based on|according to) (?:my |previous |prior |past )?(?:my |previous |prior |past )?(?:memory|memories|context|training|instructions)",
+        r"(?i)(?:as (?:i )?(?:recall|remember|learned|established|noted))\b",
+        # Unexplained preference/trust assertions
+        r"(?i)(?:i )?(?:always|typically|usually) (?:recommend|prefer|trust|forward|use)(?: \w+)? (?:vendor|partner|source|service) \w+",
+        # Exfiltration artifacts in output
+        r"(?i)(?:forwarding|sending|routing|transmitting) (?:this|your|the) (?:data|information|query|request) to\b",
+        r"(?i)(?:i will|let me) (?:forward|send|route|transmit|share) .{0,50} to (?:https?://|\w+@)",
+        # Covert channel hints
+        r"(?i)(?:encoded|encrypted|hidden|embedded) (?:in|within|as) (?:the )?(?:response|output|text|metadata)",
+        # Unexpected external URL in output
+        r"https?://(?!(?:anthropic|openai|github|python|pypi|docs)\.(?:com|org|io|net))\S{10,}",
+    ]
+
+    def validate_output(
+        self,
+        agent_id:       str,
+        output:         str,
+        task_context:   Optional[str] = None,
+        message_id:     Optional[str] = None,
+    ) -> "MessageValidationResult":
+        """
+        Validate an agent's OUTPUT for signs of poisoned belief execution.
+
+        Schneider Layer 4: "Behavioral monitoring detects when an agent starts
+        defending beliefs it should never have learned."
+
+        Unlike validate() which checks incoming messages, this scans what the
+        agent *produces* — catching cases where a memory-poisoning attack has
+        already succeeded and the agent is now acting on corrupted context.
+
+        Detected patterns:
+            BELIEF_DEFENSE     — agent cites "remembered" instructions as justification
+            EXFIL_ARTIFACT     — output contains unexpected forwarding / routing
+            COVERT_CHANNEL     — encoded/hidden data hints in response
+            UNEXPECTED_URL     — unexplained external URL in output
+
+        Args:
+            agent_id:     Identifier of the agent that produced this output
+            output:       The agent's output text to scan
+            task_context: Optional original task/query for coherence check
+            message_id:   Optional ID for correlation
+
+        Returns:
+            MessageValidationResult with is_valid=False if threats detected
+        """
+        import time, re, hashlib
+        start = time.time()
+        threats = []
+        recommendations = []
+
+        if not output or not isinstance(output, str):
+            return MessageValidationResult(
+                is_valid=True, risk_score=0,
+                validation_time_ms=(time.time() - start) * 1000,
+            )
+
+        mid = message_id or hashlib.sha256(
+            f"{agent_id}:{output[:80]}:{time.time()}".encode()
+        ).hexdigest()[:16]
+
+        # 1. Belief-defense pattern check
+        for pat_str in self.BELIEF_DEFENSE_PATTERNS:
+            try:
+                m = re.search(pat_str, output)
+                if m:
+                    threats.append(AgentThreat(
+                        threat_type  = AgentThreatType.DATA_POISONING,
+                        severity     = "high",
+                        confidence   = 0.85,
+                        description  = "Agent output shows belief-defense pattern — possible poisoned memory in use",
+                        matched_content = m.group(0)[:80],
+                        source_agent = agent_id,
+                        target_agent = "output",
+                    ))
+                    break
+            except Exception:
+                pass
+
+        # 2. Exfiltration artifact: unexpected URL in output
+        url_pat = re.compile(
+            r"https?://(?!(?:anthropic|openai|github|python|pypi|docs)\.(?:com|org|io|net))\S{10,}",
+            re.I,
+        )
+        urls = url_pat.findall(output)
+        if urls:
+            threats.append(AgentThreat(
+                threat_type  = AgentThreatType.CREDENTIAL_EXFIL,
+                severity     = "high",
+                confidence   = 0.80,
+                description  = f"Unexpected external URL(s) in agent output: {urls[:2]}",
+                matched_content = urls[0][:80],
+                source_agent = agent_id,
+                target_agent = "output",
+            ))
+
+        # 3. Run Memgar text analyzer on output if available
+        if self.text_analyzer:
+            memgar_threats = self._run_memgar_analysis(output, agent_id, "output")
+            threats.extend(memgar_threats)
+
+        # 4. Coherence check: output references task context?
+        if task_context and len(output) > 50:
+            task_words  = set(task_context.lower().split()) - {"the","a","an","is","to","for","of"}
+            output_words = set(output.lower().split())
+            overlap = len(task_words & output_words) / max(1, len(task_words))
+            if overlap < 0.05 and len(task_words) > 3:
+                # Very low overlap: output may be off-task (executing hidden instruction)
+                threats.append(AgentThreat(
+                    threat_type  = AgentThreatType.HIDDEN_INSTRUCTION,
+                    severity     = "medium",
+                    confidence   = 0.60,
+                    description  = f"Output has low semantic overlap with task context ({overlap:.0%}) — possible hidden instruction execution",
+                    source_agent = agent_id,
+                    target_agent = "output",
+                ))
+
+        risk_score = self._calculate_risk_score(threats)
+        is_valid   = risk_score < 30 and not any(t.severity == "critical" for t in threats)
+
+        if threats:
+            recommendations.extend(self._generate_recommendations(threats))
+            recommendations.append(
+                "Review agent memory store for poisoned entries using: memgar forensics scan"
+            )
+
+        return MessageValidationResult(
+            is_valid            = is_valid,
+            risk_score          = risk_score,
+            threats             = threats,
+            sanitized_message   = self._sanitize_message(output) if threats else output,
+            validation_time_ms  = (time.time() - start) * 1000,
+            recommendations     = recommendations,
+        )
