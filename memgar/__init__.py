@@ -33,7 +33,7 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
-__version__ = "0.5.13"
+__version__ = "0.5.14"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -279,6 +279,20 @@ try:
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
 
+
+# Secure Retrieval Layer (v0.5.14)
+from memgar.secure_retriever import (
+    SecureMemoryRetriever,
+    TemporalDecayEngine,
+    TrustWeightedScorer,
+    RetrievalAnomalyMonitor,
+    ScoredEntry,
+    RetrievalResult,
+    AnomalyEvent,
+    DecayShape,
+    AnomalyType,
+    create_retriever,
+)
 
 # Write-Ahead Validator / Guardian Pattern (v0.5.13)
 from memgar.write_ahead_validator import (
