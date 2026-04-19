@@ -73,6 +73,14 @@ except ImportError:
     NETWORKX_AVAILABLE = False
     logger.warning("NetworkX not installed. Memory graph features disabled. pip install networkx")
 
+# Optional: embeddings for semantic similarity
+try:
+    from sentence_transformers import SentenceTransformer
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
+    logger.debug("sentence-transformers not installed. Semantic linking disabled.")
+
 
 # =============================================================================
 # ENUMS
@@ -219,7 +227,22 @@ class MemoryGraph:
     - prune_infected() — remove a node and its infection spread
     """
 
-    def __init__(self, graph_id: Optional[str] = None):
+    def __init__(
+        self,
+        graph_id: Optional[str] = None,
+        auto_link: bool = True,
+        semantic_threshold: float = 0.7,
+        temporal_window_seconds: int = 3600,
+    ):
+        """
+        Initialize memory graph.
+
+        Args:
+            graph_id: Unique identifier for this graph
+            auto_link: Automatically detect and create relationships
+            semantic_threshold: Cosine similarity threshold for RELATES_TO edges (0-1)
+            temporal_window_seconds: Time window for temporal sequence linking
+        """
         if not NETWORKX_AVAILABLE:
             raise ImportError(
                 "NetworkX is required for MemoryGraph. Install with: pip install networkx"
@@ -229,7 +252,22 @@ class MemoryGraph:
         self._graph = nx.DiGraph()
         self._nodes: Dict[str, MemoryNode] = {}
         self._created_at = datetime.now(timezone.utc).isoformat()
-        self._stats = {"total_nodes": 0, "total_edges": 0, "blocked_nodes": 0, "quarantined_nodes": 0}
+        self._stats = {
+            "total_nodes": 0,
+            "total_edges": 0,
+            "blocked_nodes": 0,
+            "quarantined_nodes": 0,
+            "auto_edges_created": 0,
+        }
+
+        # Auto-linking config
+        self.auto_link = auto_link
+        self.semantic_threshold = semantic_threshold
+        self.temporal_window_seconds = temporal_window_seconds
+
+        # Lazy-load embedding model
+        self._embedding_model: Optional[Any] = None
+        self._embeddings_cache: Dict[str, Any] = {}
 
     # --- Node operations ---
 
@@ -311,7 +349,132 @@ class MemoryGraph:
                 if related_id in self._nodes:
                     self.add_edge(node_id, related_id, RelationType.RELATES_TO, weight=0.5)
 
+        # Auto-detect additional relationships (temporal + semantic)
+        if self.auto_link:
+            self._detect_relationships(node_id)
+
         return node_id
+
+    # --- Auto-relationship detection ---
+
+    def _get_embedding_model(self):
+        """Lazy-load sentence transformer for semantic similarity."""
+        if self._embedding_model is None and EMBEDDINGS_AVAILABLE:
+            try:
+                self._embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+                logger.info("Loaded sentence-transformers model for semantic linking")
+            except Exception as e:
+                logger.warning(f"Could not load embedding model: {e}")
+        return self._embedding_model
+
+    def _get_embedding(self, text: str):
+        """Get cached or compute embedding for text."""
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        if text_hash not in self._embeddings_cache:
+            model = self._get_embedding_model()
+            if model:
+                self._embeddings_cache[text_hash] = model.encode(text, convert_to_numpy=True)
+            else:
+                return None
+        return self._embeddings_cache.get(text_hash)
+
+    def _detect_relationships(self, new_node_id: str) -> int:
+        """
+        Auto-detect relationships for a newly added node.
+
+        Creates edges based on:
+        1. Temporal proximity (recent nodes in same session)
+        2. Semantic similarity (content overlap)
+        3. Keyword overlap (simple heuristic)
+
+        Returns:
+            Number of edges created
+        """
+        if not self.auto_link:
+            return 0
+
+        new_node = self._nodes[new_node_id]
+        edges_created = 0
+
+        # Parse timestamp
+        try:
+            new_ts = datetime.fromisoformat(new_node.timestamp.replace('Z', '+00:00'))
+        except Exception:
+            new_ts = datetime.now(timezone.utc)
+
+        # Get embedding if available
+        new_emb = self._get_embedding(new_node.content)
+
+        for other_id, other_node in self._nodes.items():
+            if other_id == new_node_id:
+                continue
+
+            # Skip if edge already exists
+            if self._graph.has_edge(new_node_id, other_id) or self._graph.has_edge(other_id, new_node_id):
+                continue
+
+            # 1. TEMPORAL SEQUENCE: same session, within time window
+            if new_node.session_id and new_node.session_id == other_node.session_id:
+                try:
+                    other_ts = datetime.fromisoformat(other_node.timestamp.replace('Z', '+00:00'))
+                    time_diff = abs((new_ts - other_ts).total_seconds())
+
+                    if time_diff <= self.temporal_window_seconds:
+                        # Chronological edge (older → newer)
+                        if other_ts < new_ts:
+                            self.add_edge(
+                                other_id, new_node_id,
+                                RelationType.DERIVED_FROM,
+                                weight=0.6,
+                                confidence=0.8,
+                                metadata={"reason": "temporal_sequence", "time_diff_sec": time_diff},
+                            )
+                            edges_created += 1
+                except Exception:
+                    pass
+
+            # 2. SEMANTIC SIMILARITY: content overlap (if embeddings available)
+            if new_emb is not None:
+                other_emb = self._get_embedding(other_node.content)
+                if other_emb is not None:
+                    # Cosine similarity
+                    import numpy as np
+                    similarity = float(np.dot(new_emb, other_emb) / (
+                        np.linalg.norm(new_emb) * np.linalg.norm(other_emb)
+                    ))
+
+                    if similarity >= self.semantic_threshold:
+                        self.add_edge(
+                            new_node_id, other_id,
+                            RelationType.RELATES_TO,
+                            weight=similarity,
+                            confidence=similarity,
+                            metadata={"reason": "semantic_similarity", "similarity": similarity},
+                        )
+                        edges_created += 1
+
+            # 3. KEYWORD OVERLAP: simple fallback if no embeddings
+            elif len(new_node.content) > 20 and len(other_node.content) > 20:
+                # Extract keywords (simple: words > 4 chars)
+                new_words = set(w.lower() for w in new_node.content.split() if len(w) > 4)
+                other_words = set(w.lower() for w in other_node.content.split() if len(w) > 4)
+
+                if new_words and other_words:
+                    overlap = len(new_words & other_words) / len(new_words | other_words)
+                    if overlap >= 0.3:  # 30% overlap
+                        self.add_edge(
+                            new_node_id, other_id,
+                            RelationType.RELATES_TO,
+                            weight=overlap,
+                            confidence=0.6,
+                            metadata={"reason": "keyword_overlap", "overlap": overlap},
+                        )
+                        edges_created += 1
+
+        if edges_created > 0:
+            self._stats["auto_edges_created"] = self._stats.get("auto_edges_created", 0) + edges_created
+
+        return edges_created
 
     def add_edge(
         self,
@@ -575,6 +738,43 @@ class MemoryGraph:
                     self._graph.nodes[node_id]["importance"] = score
         except Exception as e:
             logger.warning(f"PageRank failed: {e}")
+
+    def compute_all_infection_scores(self, max_depth: int = 3) -> None:
+        """
+        Compute infection_score for all nodes in the graph.
+
+        This is an expensive operation — use sparingly or cache results.
+        Updates node.infection_score in-place.
+
+        Args:
+            max_depth: Maximum propagation depth for infection analysis
+        """
+        if self._stats["total_nodes"] == 0:
+            return
+
+        for node_id in self._nodes:
+            try:
+                report = self.analyze_infection(node_id, max_depth=max_depth)
+                self._nodes[node_id].infection_score = report.spread_score
+                self._graph.nodes[node_id]["infection_score"] = report.spread_score
+            except Exception as e:
+                logger.debug(f"Could not compute infection score for {node_id}: {e}")
+
+    def get_high_risk_nodes(self, min_risk: int = 60, min_infection: float = 0.5) -> List[str]:
+        """
+        Find nodes that are both high-risk and highly infectious.
+
+        Args:
+            min_risk: Minimum risk_score threshold
+            min_infection: Minimum infection_score threshold
+
+        Returns:
+            List of node_ids matching both criteria
+        """
+        return [
+            nid for nid, node in self._nodes.items()
+            if node.risk_score >= min_risk and node.infection_score >= min_infection
+        ]
 
     def prune_infected(self, source_node_id: str) -> int:
         """
