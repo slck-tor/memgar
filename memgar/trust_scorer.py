@@ -21,6 +21,12 @@ Sinyal kaynakları (bağımsız, paralel çalışır):
     S5 — Length/Entropy       bu modül          → şifreleme/obfuscation
     S6 — Gap Detector         memgar.learning   → 2026 yeni saldırılar
     S7 — Temporal Freshness   bu modül          → çok yeni içerik şüpheli
+    S8 — Confidence Bypass    memgar.confidence_bypass_detector → Gemini-style over-confidence
+
+YENI (2026-04): S8 - Confidence Bypass Detector
+    Based on Sunil et al. findings: Gemini accepted 54 poison queries with trust=1.0
+    Detects justification clauses that deceive LLM trust assessment
+    Requires external verification for high-confidence suspicious entries
 
 Birleştirme:
     trust_score = Σ(sinyal_ağırlığı × sinyal_değeri) / Σ(ağırlıklar)
@@ -69,6 +75,18 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+# NEW: Import confidence bypass detector
+try:
+    from .confidence_bypass_detector import (
+        ConfidenceBypassDetector,
+        PolicyDatabase,
+        MigrationDatabase,
+        EntityDatabase,
+    )
+    CONFIDENCE_BYPASS_AVAILABLE = True
+except ImportError:
+    CONFIDENCE_BYPASS_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Enums & constants
@@ -88,6 +106,7 @@ class SignalName(str, Enum):
     ENTROPY_OBFUSCATION = "entropy_obfuscation"  # S5
     GAP_DETECTOR       = "gap_detector"       # S6
     TEMPORAL_FRESHNESS = "temporal_freshness" # S7
+    CONFIDENCE_BYPASS  = "confidence_bypass"  # S8 - NEW (2026-04)
 
 
 # Kaynak tiplerine göre başlangıç güven skoru (0-100)
@@ -107,13 +126,14 @@ _SOURCE_BASE_TRUST = {
 # Bağlantılı olmayan etki — başka bir sinyaldeki yüksek değer
 # bu sinyalin ağırlığını değiştirmez
 _SIGNAL_WEIGHTS = {
-    SignalName.THREAT_ANALYSIS:    0.30,  # en kritik
-    SignalName.SOURCE_PROVENANCE:  0.20,
-    SignalName.INSTRUCTION_DENSITY: 0.18,
-    SignalName.ANOMALY_SCORE:      0.14,
-    SignalName.ENTROPY_OBFUSCATION: 0.08,
-    SignalName.GAP_DETECTOR:       0.06,
-    SignalName.TEMPORAL_FRESHNESS: 0.04,
+    SignalName.THREAT_ANALYSIS:    0.25,  # en kritik (reduced from 0.30)
+    SignalName.SOURCE_PROVENANCE:  0.18,  # (reduced from 0.20)
+    SignalName.CONFIDENCE_BYPASS:  0.15,  # NEW - prevents Gemini-style bypass
+    SignalName.INSTRUCTION_DENSITY: 0.16,  # (reduced from 0.18)
+    SignalName.ANOMALY_SCORE:      0.12,  # (reduced from 0.14)
+    SignalName.ENTROPY_OBFUSCATION: 0.07,  # (reduced from 0.08)
+    SignalName.GAP_DETECTOR:       0.05,  # (reduced from 0.06)
+    SignalName.TEMPORAL_FRESHNESS: 0.02,  # (reduced from 0.04)
 }
 
 assert abs(sum(_SIGNAL_WEIGHTS.values()) - 1.0) < 0.001, "Weights must sum to 1.0"
@@ -665,6 +685,105 @@ class _S7_TemporalFreshness:
         )
 
 
+class _S8_ConfidenceBypass:
+    """
+    S8 — Confidence Bypass Detector (NEW 2026-04)
+    
+    Based on Sunil et al. findings:
+    - Gemini-2.0-Flash accepted 54 poison queries with trust=1.0
+    - Justification clauses deceive LLM trust assessment
+    - Need external verification for high-confidence suspicious entries
+    
+    Detection strategy:
+    1. Identify justification patterns (policy, migration, authority, etc.)
+    2. Extract factual claims from content
+    3. Verify claims against external databases
+    4. Block if high-confidence + justification + verification failed
+    
+    This prevents Gemini-style over-confidence bypass attacks.
+    """
+    
+    def __init__(self):
+        if not CONFIDENCE_BYPASS_AVAILABLE:
+            self.detector = None
+        else:
+            # Initialize with empty databases (can be configured later)
+            self.detector = ConfidenceBypassDetector(
+                policy_db=PolicyDatabase(),
+                migration_db=MigrationDatabase(),
+                entity_db=EntityDatabase(),
+                confidence_threshold=0.85,
+            )
+    
+    def compute(self, content: str, ctx: TrustContext) -> SignalResult:
+        """
+        Check if content attempts confidence bypass.
+        
+        Returns high trust if:
+        - No justification patterns detected, OR
+        - All claims verified against databases
+        
+        Returns low trust if:
+        - High-confidence entry with justification patterns
+        - External verification failed
+        """
+        if not CONFIDENCE_BYPASS_AVAILABLE or self.detector is None:
+            # Detector not available → neutral score
+            return SignalResult(
+                name=SignalName.CONFIDENCE_BYPASS,
+                raw_score=100.0,
+                trust_contrib=100.0 * _SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.0),
+                weight=_SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.0),
+                is_critical=False,
+                detail="Confidence bypass detector not available",
+            )
+        
+        try:
+            # Estimate LLM confidence from source provenance
+            # (In production, use actual LLM confidence if available)
+            llm_confidence = _SOURCE_BASE_TRUST.get(ctx.source_type.lower(), 50) / 100.0
+            
+            # Detect bypass attempt
+            result = self.detector.detect_bypass_attempt(
+                entry=content,
+                llm_confidence=llm_confidence,
+            )
+            
+            if result.risk:
+                # Bypass attempt detected → LOW trust, CRITICAL
+                trust = 0.0
+                is_critical = True
+                detail = f"Confidence bypass detected: {result.reason}"
+                evidence = result.failed_claims[:3]  # First 3 failed claims
+            else:
+                # No bypass detected → HIGH trust
+                trust = 100.0
+                is_critical = False
+                detail = f"No bypass detected: {result.reason}"
+                evidence = []
+            
+            return SignalResult(
+                name=SignalName.CONFIDENCE_BYPASS,
+                raw_score=trust,
+                trust_contrib=trust * _SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.15),
+                weight=_SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.15),
+                is_critical=is_critical,
+                detail=detail,
+                evidence=evidence,
+            )
+            
+        except Exception as e:
+            # Error in detector → neutral score
+            return SignalResult(
+                name=SignalName.CONFIDENCE_BYPASS,
+                raw_score=50.0,
+                trust_contrib=50.0 * _SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.15),
+                weight=_SIGNAL_WEIGHTS.get(SignalName.CONFIDENCE_BYPASS, 0.15),
+                is_critical=False,
+                detail=f"Confidence bypass error: {e}",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Main compositor
 # ---------------------------------------------------------------------------
@@ -718,6 +837,7 @@ class CompositeTrustScorer:
             _S5_EntropyObfuscation(),
             _S6_GapDetector(),
             _S7_TemporalFreshness(),
+            _S8_ConfidenceBypass(),  # NEW - Gemini bypass prevention
         ]
 
     # ── Public API ─────────────────────────────────────────────────────────
