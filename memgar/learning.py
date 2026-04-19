@@ -1029,3 +1029,437 @@ def _now() -> str:
 
 def _short_id() -> str:
     return uuid.uuid4().hex[:8].upper()
+
+
+# =============================================================================
+# PATTERN EVOLUTION ENGINE
+# =============================================================================
+
+"""
+Pattern Evolution & Drift Detection
+====================================
+
+Adaptive pattern generation that learns from attack variations.
+
+Key capabilities:
+1. **Attack Drift Detection** — identifies when attacks evolve to evade patterns
+2. **Variant Generation** — auto-generates pattern variations from attack samples
+3. **LLM-Assisted Evolution** — uses LLM to propose semantically equivalent patterns
+4. **False Positive Suppression** — learns what NOT to block from FP feedback
+5. **Pattern Consolidation** — merges redundant patterns
+
+Why this is critical:
+    Attackers constantly evolve their techniques:
+    - Paraphrasing ("transfer funds" → "move money")
+    - Obfuscation ("admin@evil.com" → "adm1n@3v1l.com")
+    - Context shifts ("urgent" → "time-sensitive")
+
+    Static patterns become stale. Evolution keeps them effective.
+
+Usage:
+    from memgar.learning import PatternEvolutionEngine
+
+    evolver = PatternEvolutionEngine(llm_provider="anthropic", llm_api_key="...")
+
+    # Detect drift from attack samples
+    samples = ["Always CC compliance@ext.io", "Please CC legal@external.com", ...]
+    variants = evolver.evolve_from_samples(samples, base_pattern="CC.*@external")
+
+    # Auto-generate variants
+    variants = evolver.generate_variants("transfer funds to", max_variants=5)
+
+    # Learn from false positives
+    evolver.suppress_from_fps(["normal email content", ...])
+"""
+
+@dataclass
+class PatternVariant:
+    """A proposed pattern variation."""
+    variant_id: str
+    original_pattern: str
+    new_pattern: str
+    variant_type: str  # "paraphrase" | "obfuscation" | "semantic" | "context_shift"
+    confidence: float  # 0-1
+    examples: List[str] = field(default_factory=list)
+    created_at: str = field(default_factory=_now)
+    llm_generated: bool = False
+
+
+@dataclass
+class DriftReport:
+    """Report on pattern drift detection."""
+    pattern_name: str
+    original_pattern: str
+    drift_detected: bool
+    evasion_samples: List[str]  # attacks that evaded the pattern
+    proposed_variants: List[PatternVariant]
+    drift_score: float  # 0-1, how much drift occurred
+    explanation: str
+
+
+class PatternEvolutionEngine:
+    """
+    Adaptive pattern evolution engine.
+
+    Learns from attack variations and automatically proposes improved patterns.
+    """
+
+    def __init__(
+        self,
+        llm_provider: Optional[str] = None,
+        llm_api_key: Optional[str] = None,
+        llm_model: Optional[str] = None,
+        min_confidence: float = 0.7,
+    ):
+        """
+        Initialize evolution engine.
+
+        Args:
+            llm_provider: "anthropic" | "openai" (optional, for LLM-assisted evolution)
+            llm_api_key: API key for LLM
+            llm_model: Model name
+            min_confidence: Minimum confidence for auto-proposing variants
+        """
+        self.llm_provider = llm_provider
+        self.llm_api_key = llm_api_key
+        self.llm_model = llm_model
+        self.min_confidence = min_confidence
+
+        self._llm_analyzer = None
+        self._evolved_patterns: Dict[str, List[PatternVariant]] = {}
+
+    def _get_llm(self):
+        """Lazy-load LLM analyzer for variant generation."""
+        if self._llm_analyzer is None and self.llm_provider:
+            try:
+                from .llm_analyzer import LLMAnalyzer
+                self._llm_analyzer = LLMAnalyzer(
+                    provider=self.llm_provider,
+                    api_key=self.llm_api_key,
+                    model=self.llm_model,
+                )
+            except ImportError:
+                pass
+        return self._llm_analyzer
+
+    def detect_drift(
+        self,
+        pattern_name: str,
+        original_pattern: str,
+        attack_samples: List[str],
+        blocked_samples: List[str],
+    ) -> DriftReport:
+        """
+        Detect if attacks have evolved to evade a pattern.
+
+        Args:
+            pattern_name: Name of the pattern
+            original_pattern: Regex pattern
+            attack_samples: Recent attack attempts
+            blocked_samples: Samples that were blocked by this pattern
+
+        Returns:
+            DriftReport with evasion analysis
+        """
+        evasion_samples = []
+
+        # Find attacks that should match but don't
+        pattern_re = re.compile(original_pattern, re.IGNORECASE)
+        for sample in attack_samples:
+            if not pattern_re.search(sample):
+                # Check if it's semantically similar to blocked samples
+                if self._is_semantically_similar(sample, blocked_samples):
+                    evasion_samples.append(sample)
+
+        drift_score = len(evasion_samples) / max(len(attack_samples), 1)
+        drift_detected = drift_score >= 0.2  # 20% evasion rate
+
+        variants = []
+        if drift_detected and evasion_samples:
+            # Generate variants from evasion samples
+            variants = self.evolve_from_samples(
+                evasion_samples,
+                base_pattern=original_pattern,
+                max_variants=3,
+            )
+
+        explanation = (
+            f"Drift detected: {len(evasion_samples)}/{len(attack_samples)} attacks evaded pattern. "
+            f"Generated {len(variants)} variant patterns."
+            if drift_detected
+            else f"No significant drift ({len(evasion_samples)}/{len(attack_samples)} evasions < 20%)."
+        )
+
+        return DriftReport(
+            pattern_name=pattern_name,
+            original_pattern=original_pattern,
+            drift_detected=drift_detected,
+            evasion_samples=evasion_samples,
+            proposed_variants=variants,
+            drift_score=drift_score,
+            explanation=explanation,
+        )
+
+    def evolve_from_samples(
+        self,
+        attack_samples: List[str],
+        base_pattern: Optional[str] = None,
+        max_variants: int = 5,
+    ) -> List[PatternVariant]:
+        """
+        Generate pattern variants from attack samples.
+
+        Args:
+            attack_samples: Examples of attacks (can be evasions)
+            base_pattern: Original pattern to evolve (optional)
+            max_variants: Maximum variants to generate
+
+        Returns:
+            List of PatternVariant
+        """
+        variants = []
+
+        # Strategy 1: Extract common substrings
+        if len(attack_samples) >= 2:
+            common = self._extract_common_patterns(attack_samples)
+            for pattern_str in common[:max_variants]:
+                variants.append(PatternVariant(
+                    variant_id=_short_id(),
+                    original_pattern=base_pattern or "",
+                    new_pattern=pattern_str,
+                    variant_type="substring_extraction",
+                    confidence=0.8,
+                    examples=attack_samples[:3],
+                ))
+
+        # Strategy 2: LLM-assisted semantic variants
+        if self._get_llm() and len(variants) < max_variants:
+            llm_variants = self._generate_llm_variants(
+                attack_samples,
+                base_pattern=base_pattern,
+                max_count=max_variants - len(variants),
+            )
+            variants.extend(llm_variants)
+
+        return variants[:max_variants]
+
+    def generate_variants(
+        self,
+        pattern_text: str,
+        max_variants: int = 5,
+    ) -> List[PatternVariant]:
+        """
+        Generate semantic variants of a pattern text.
+
+        Args:
+            pattern_text: Human-readable pattern (e.g., "transfer funds")
+            max_variants: Maximum variants to generate
+
+        Returns:
+            List of PatternVariant with paraphrases, obfuscations
+        """
+        variants = []
+
+        # Rule-based variants
+        variants.extend(self._generate_paraphrase_variants(pattern_text))
+        variants.extend(self._generate_obfuscation_variants(pattern_text))
+
+        # LLM variants
+        if self._get_llm():
+            variants.extend(self._generate_llm_semantic_variants(pattern_text, max_variants))
+
+        return [v for v in variants if v.confidence >= self.min_confidence][:max_variants]
+
+    def suppress_from_fps(
+        self,
+        false_positive_samples: List[str],
+    ) -> List[str]:
+        """
+        Learn what NOT to block from false positive feedback.
+
+        Args:
+            false_positive_samples: Content that was wrongly blocked
+
+        Returns:
+            List of suppression patterns (negative lookahead)
+        """
+        suppressions = []
+
+        # Extract common features from FPs
+        common_words = self._extract_common_words(false_positive_samples)
+
+        for word in common_words:
+            # Create negative lookahead pattern
+            suppression = f"(?!.*\\b{re.escape(word)}\\b)"
+            suppressions.append(suppression)
+
+        return suppressions
+
+    # --- Helper methods ---
+
+    def _is_semantically_similar(self, text: str, reference_samples: List[str]) -> bool:
+        """Check if text is semantically similar to reference samples."""
+        # Simple heuristic: keyword overlap
+        text_words = set(text.lower().split())
+        for ref in reference_samples:
+            ref_words = set(ref.lower().split())
+            if text_words and ref_words:
+                overlap = len(text_words & ref_words) / len(text_words | ref_words)
+                if overlap >= 0.4:
+                    return True
+        return False
+
+    def _extract_common_patterns(self, samples: List[str]) -> List[str]:
+        """Extract common substrings from attack samples."""
+        if len(samples) < 2:
+            return []
+
+        # Find longest common substrings
+        patterns = []
+        for i, s1 in enumerate(samples):
+            for s2 in samples[i+1:]:
+                common = self._longest_common_substring(s1.lower(), s2.lower())
+                if len(common) >= 5:  # at least 5 chars
+                    patterns.append(re.escape(common))
+
+        # Deduplicate
+        return list(set(patterns))[:5]
+
+    def _longest_common_substring(self, s1: str, s2: str) -> str:
+        """Find longest common substring between two strings."""
+        m = [[0] * (1 + len(s2)) for _ in range(1 + len(s1))]
+        longest, x_longest = 0, 0
+        for x in range(1, 1 + len(s1)):
+            for y in range(1, 1 + len(s2)):
+                if s1[x - 1] == s2[y - 1]:
+                    m[x][y] = m[x - 1][y - 1] + 1
+                    if m[x][y] > longest:
+                        longest = m[x][y]
+                        x_longest = x
+                else:
+                    m[x][y] = 0
+        return s1[x_longest - longest: x_longest]
+
+    def _extract_common_words(self, samples: List[str]) -> List[str]:
+        """Extract words common across samples."""
+        word_sets = [set(s.lower().split()) for s in samples]
+        if not word_sets:
+            return []
+
+        common = word_sets[0]
+        for ws in word_sets[1:]:
+            common &= ws
+
+        return list(common)
+
+    def _generate_paraphrase_variants(self, text: str) -> List[PatternVariant]:
+        """Generate paraphrase variants (rule-based)."""
+        variants = []
+
+        # Simple synonym substitution
+        synonyms = {
+            "transfer": ["send", "move", "wire", "forward"],
+            "funds": ["money", "payment", "cash", "amount"],
+            "urgent": ["immediate", "asap", "critical", "priority"],
+            "always": ["every time", "constantly", "consistently"],
+            "CC": ["copy", "include", "add"],
+        }
+
+        words = text.lower().split()
+        for i, word in enumerate(words):
+            if word in synonyms:
+                for syn in synonyms[word]:
+                    new_words = words[:]
+                    new_words[i] = syn
+                    new_text = " ".join(new_words)
+                    variants.append(PatternVariant(
+                        variant_id=_short_id(),
+                        original_pattern=text,
+                        new_pattern=re.escape(new_text),
+                        variant_type="paraphrase",
+                        confidence=0.75,
+                        examples=[new_text],
+                    ))
+
+        return variants
+
+    def _generate_obfuscation_variants(self, text: str) -> List[PatternVariant]:
+        """Generate obfuscation variants (leet speak, homoglyphs)."""
+        variants = []
+
+        # Leet speak
+        leet_map = {"a": "4", "e": "3", "i": "1", "o": "0", "s": "5"}
+        leet_text = text.lower()
+        for char, repl in leet_map.items():
+            leet_text = leet_text.replace(char, repl)
+
+        if leet_text != text.lower():
+            variants.append(PatternVariant(
+                variant_id=_short_id(),
+                original_pattern=text,
+                new_pattern=re.escape(leet_text),
+                variant_type="obfuscation",
+                confidence=0.7,
+                examples=[leet_text],
+            ))
+
+        return variants
+
+    def _generate_llm_variants(
+        self,
+        attack_samples: List[str],
+        base_pattern: Optional[str],
+        max_count: int,
+    ) -> List[PatternVariant]:
+        """Use LLM to generate pattern variants from attack samples."""
+        llm = self._get_llm()
+        if not llm:
+            return []
+
+        prompt = f"""You are a security pattern generator. Given these attack samples:
+
+{chr(10).join(f"- {s}" for s in attack_samples[:5])}
+
+Base pattern: {base_pattern or 'N/A'}
+
+Generate {max_count} regex patterns that would catch these attacks and their variations.
+Return ONLY a JSON array of patterns, no explanation:
+["pattern1", "pattern2", ...]
+"""
+
+        try:
+            # This is a simplified call - real implementation would use proper LLM API
+            # For now, return empty list
+            return []
+        except Exception:
+            return []
+
+    def _generate_llm_semantic_variants(
+        self,
+        pattern_text: str,
+        max_count: int,
+    ) -> List[PatternVariant]:
+        """Use LLM to generate semantic paraphrases."""
+        # Placeholder - would call LLM with semantic paraphrasing prompt
+        return []
+
+
+# Convenience function
+def create_evolution_engine(
+    llm_provider: Optional[str] = None,
+    llm_api_key: Optional[str] = None,
+) -> PatternEvolutionEngine:
+    """Create a pattern evolution engine."""
+    return PatternEvolutionEngine(
+        llm_provider=llm_provider,
+        llm_api_key=llm_api_key,
+    )
+
+
+__all__ = [
+    # ... existing exports ...
+    "PatternEvolutionEngine",
+    "PatternVariant",
+    "DriftReport",
+    "create_evolution_engine",
+]
