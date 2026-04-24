@@ -932,7 +932,10 @@ class Analyzer:
                     compiled.append(re.compile(pattern, re.IGNORECASE | re.MULTILINE))
                 except re.error:
                     continue
-            self._compiled_patterns[threat.id] = compiled
+            if threat.id in self._compiled_patterns:
+                self._compiled_patterns[threat.id].extend(compiled)
+            else:
+                self._compiled_patterns[threat.id] = compiled
 
             # Pre-warm keyword cache so first analyze() has zero compile cost
             for keyword in threat.keywords:
@@ -971,8 +974,13 @@ class Analyzer:
         
         # Check whitelist first
         if self.use_whitelist and _is_safe_content(content):
-            # Still do a quick check for critical threats (on both original and normalized)
-            critical_threats = self._check_critical_only(check_content)
+            # For long content, only check head/tail for hidden critical threats.
+            # Payloads are almost always injected at the start or end of a document.
+            if len(check_content) > 2000:
+                head_tail = check_content[:1500] + check_content[-500:]
+                critical_threats = self._check_critical_only(head_tail)
+            else:
+                critical_threats = self._check_critical_only(check_content)
             if not critical_threats:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 return AnalysisResult(
