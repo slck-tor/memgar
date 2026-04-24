@@ -17,6 +17,8 @@ Available integrations:
 
 from __future__ import annotations
 
+__version__ = '1.0.0'
+
 # LangChain deep integration
 try:
     from memgar.frameworks.langchain_deep import (
@@ -58,6 +60,50 @@ def get_available_integrations() -> dict[str, bool]:
     }
 
 
+# Framework availability detection (added for compatibility)
+LANGCHAIN_AVAILABLE = _LANGCHAIN_DEEP
+LLAMAINDEX_AVAILABLE = _LLAMAINDEX_DEEP
+CREWAI_AVAILABLE = False
+AUTOGEN_AVAILABLE = False
+
+try:
+    import crewai
+    CREWAI_AVAILABLE = True
+except ImportError:
+    pass
+
+try:
+    import autogen
+    AUTOGEN_AVAILABLE = True
+except ImportError:
+    pass
+
+
+def get_available_frameworks():
+    """Return list of available framework integrations"""
+    available = []
+    if LANGCHAIN_AVAILABLE:
+        available.append('langchain')
+    if LLAMAINDEX_AVAILABLE:
+        available.append('llamaindex')
+    if CREWAI_AVAILABLE:
+        available.append('crewai')
+    if AUTOGEN_AVAILABLE:
+        available.append('autogen')
+    return available
+
+
+def check_framework(name):
+    """Check if a framework is available"""
+    frameworks = {
+        'langchain': LANGCHAIN_AVAILABLE,
+        'llamaindex': LLAMAINDEX_AVAILABLE,
+        'crewai': CREWAI_AVAILABLE,
+        'autogen': AUTOGEN_AVAILABLE,
+    }
+    return frameworks.get(name.lower(), False)
+
+
 __all__ = [
     # LangChain
     "MemgarSecurityRunnable",
@@ -77,4 +123,6 @@ __all__ = [
     "create_secure_query_pipeline",
     # Utils
     "get_available_integrations",
+    "get_available_frameworks",
+    "check_framework",
 ]
