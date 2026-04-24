@@ -202,12 +202,45 @@ class ScanResult:
     def threat_count(self) -> int:
         """Total number of threats found."""
         return sum(len(r.threats) for r in self.results)
-    
+
     @property
     def has_critical(self) -> bool:
         """Check if any critical threats were found."""
-        return self.threats_by_severity.get("critical", 0) > 0
-    
+        return any(
+            t.threat.severity.value == "critical"
+            for t in self.threats
+        )
+
+    @property
+    def threat_summary(self) -> dict[str, int]:
+        """Group threat count by severity."""
+        summary: dict[str, int] = {}
+        for t in self.threats:
+            sev = t.threat.severity.value
+            summary[sev] = summary.get(sev, 0) + 1
+        return summary
+
+    def merge(self, other: "ScanResult") -> "ScanResult":
+        """Merge two ScanResults into a new combined result."""
+        return ScanResult(
+            total_entries=self.total_entries + other.total_entries,
+            clean_entries=self.clean_entries + other.clean_entries,
+            threat_entries=self.threat_entries + other.threat_entries,
+            quarantine_entries=self.quarantine_entries + other.quarantine_entries,
+            total=self.total + other.total,
+            clean=self.clean + other.clean,
+            blocked=self.blocked + other.blocked,
+            quarantined=self.quarantined + other.quarantined,
+            suspicious=self.suspicious + other.suspicious,
+            threats=self.threats + other.threats,
+            errors=self.errors + other.errors,
+            threats_by_severity={},
+            threats_by_category={},
+            results=self.results + other.results,
+            scan_time_ms=self.scan_time_ms + other.scan_time_ms,
+            files_scanned=self.files_scanned + other.files_scanned,
+        )
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         # Normalize scanner shorthand aliases into canonical fields

@@ -371,16 +371,6 @@ from memgar.eu_ai_act import (
     Requirement,
 )
 
-# EU AI Act Compliance Reporter (v0.5.11)
-from memgar.eu.ai.act import (
-    EUAIActReporter,
-    ComplianceReport,
-    ArticleCheck,
-    ComplianceLevel,
-    RiskCategory,
-    generate_report as generate_eu_ai_act_report,
-)
-
 # SIEM Integration (v0.5.10)
 from memgar.siem import (
     SIEMRouter,
