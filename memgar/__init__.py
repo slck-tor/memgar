@@ -372,7 +372,7 @@ from memgar.eu_ai_act import (
 )
 
 # EU AI Act Compliance Reporter (v0.5.11)
-from memgar.euaiact import (
+from memgar.eu.ai.act import (
     EUAIActReporter,
     ComplianceReport,
     ArticleCheck,
