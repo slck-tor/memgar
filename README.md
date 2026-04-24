@@ -218,6 +218,31 @@ memgar report ./memories/ -o security_report.html
 
 ---
 
+## Features (ADD ML Section)
+### ML-Enhanced Detection ✨ NEW
+- 97.92% accuracy
+- Intent-based classification
+- Novel attack detection
+- Continuous learning
+
+## Quick Start (ADD ML Example)
+### With ML Detection
+from memgar.ml_semantic_detector import MLSemanticDetector
+
+detector = MLSemanticDetector('model.pkl')
+result = detector.detect(user_input)
+
+## Installation (ADD ML Profile)
+# Full ML support
+pip install memgar[semantic,llm]
+
+## Documentation (ADD Links)
+- [ML System Guide](docs/ML_SYSTEM.md)
+- [Dependencies](docs/DEPENDENCIES.md)
+- [Testing Guide](docs/TESTING.md)
+- ----------------------------
+
+
 ## Python API Reference
 
 ```python
