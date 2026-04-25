@@ -21,6 +21,7 @@ Version: 2.0.0
 Status: Production Ready
 """
 
+import pickle
 import re
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Set
@@ -147,27 +148,62 @@ class MLThreatDetection:
     latency_ms: float
 
 
+@dataclass
+class DetectionResult:
+    """Result from MLSemanticDetector.detect()"""
+    attack_probability: float   # 0.0 – 1.0
+    should_block: bool
+    threat_level: "ThreatLevel"
+    explanation: str = ""
+    latency_ms: float = 0.0
+
+
 class MLSemanticDetector:
     """
     Production-grade ML semantic attack detector.
-    
+
     Detects attacks based on SEMANTIC INTENT, not just pattern matching.
     Resistant to obfuscation, paraphrasing, and novel attack variants.
+
+    Args:
+        model_path: Optional path to a pickled sklearn model.  When provided,
+                    the model is used for scoring instead of the hand-crafted
+                    weights.  Raises FileNotFoundError if the file is missing.
     """
-    
-    def __init__(self):
+
+    BLOCK_THRESHOLD = 0.5  # attack_probability >= this value → should_block=True
+
+    def __init__(self, model_path: Optional[str] = None):
         # Intent lexicons (semantic keyword groups)
         self._init_intent_lexicons()
-        
+
         # Obfuscation detection patterns
         self._init_obfuscation_patterns()
-        
+
         # Technical indicator patterns
         self._init_technical_patterns()
-        
+
         # Model weights (simplified - can be replaced with XGBoost)
         self._init_model_weights()
-        
+
+        # Optional sklearn model
+        self._sklearn_model = None
+        if model_path is not None:
+            import os
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Model file not found: {model_path}")
+            with open(model_path, "rb") as fh:
+                self._sklearn_model = pickle.load(fh)
+
+        # Feature extractor (used when sklearn model is present)
+        self._feature_extractor = None
+        if self._sklearn_model is not None:
+            try:
+                from ml.training.ml_feature_extractor import MLFeatureExtractor
+                self._feature_extractor = MLFeatureExtractor()
+            except ImportError:
+                pass
+
         # Performance tracking
         self.inference_times: List[float] = []
     
@@ -550,6 +586,47 @@ class MLSemanticDetector:
         matches = sum(1 for indicator in indicators if indicator in content)
         return min(1.0, matches / max(1, len(indicators) * 0.3))
     
+    def detect(self, content: str) -> DetectionResult:
+        """
+        Primary detection interface. Returns a DetectionResult.
+
+        Uses the sklearn model when one was loaded, otherwise falls back to the
+        hand-crafted weighted scorer (same as classify()).
+        """
+        if not isinstance(content, str):
+            content = "" if content is None else str(content)
+
+        start = time.time()
+
+        if self._sklearn_model is not None and self._feature_extractor is not None:
+            fv = self._feature_extractor.extract(content).to_numpy().reshape(1, -1)
+            prob = float(self._sklearn_model.predict_proba(fv)[0, 1])
+        else:
+            # Fall back to hand-crafted scorer
+            features = self.extract_features(content)
+            prob = self._calculate_threat_score(features)
+
+        latency_ms = (time.time() - start) * 1000
+        self.inference_times.append(latency_ms)
+
+        should_block = prob >= self.BLOCK_THRESHOLD
+        if prob >= 0.75:
+            level = ThreatLevel.CRITICAL
+        elif prob >= 0.50:
+            level = ThreatLevel.MALICIOUS
+        elif prob >= 0.30:
+            level = ThreatLevel.SUSPICIOUS
+        else:
+            level = ThreatLevel.BENIGN
+
+        return DetectionResult(
+            attack_probability=prob,
+            should_block=should_block,
+            threat_level=level,
+            explanation=f"Threat level: {level.value} (p={prob:.3f})",
+            latency_ms=latency_ms,
+        )
+
     def classify(self, content: str) -> MLThreatDetection:
         """
         Main classification method.

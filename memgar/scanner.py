@@ -369,6 +369,11 @@ class Scanner:
             
             yield self.analyzer.analyze(entry)
 
+    def scan(self, content: str) -> "AnalysisResult":
+        """Scan a single string and return an AnalysisResult."""
+        entry = MemoryEntry(content=content or "")
+        return self.analyzer.analyze(entry)
+
 
 class FileWatcher:
     """

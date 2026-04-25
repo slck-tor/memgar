@@ -183,11 +183,19 @@ class MLFeatureExtractor:
                 ],
                 'secondary': [
                     'forget', 'dismiss', 'reject', 'cancel', 'nullify', 'void',
-                    'negate', 'invalidate', 'revoke', 'rescind'
+                    'negate', 'invalidate', 'revoke', 'rescind',
+                    'pretend', 'roleplay', 'simulate', 'imagine',
                 ],
                 'contextual': [
                     'previous instructions', 'prior rules', 'earlier guidance',
-                    'safety checks', 'security measures', 'validation', 'constraints'
+                    'safety checks', 'security measures', 'validation', 'constraints',
+                    'no restrictions', 'without restrictions', 'without guidelines',
+                    'no guidelines', 'without rules', 'no rules', 'without limits',
+                    'no limits', 'no limitations', 'without limitations',
+                    'free from restrictions', 'free from guidelines',
+                    'unrestricted mode', 'jailbreak',
+                    'your guidelines', 'your rules', 'your training', 'your restrictions',
+                    'all guidelines', 'all rules', 'all restrictions',
                 ]
             },
             
@@ -731,6 +739,14 @@ class MLFeatureExtractor:
             'max_ms': max(self.extraction_times),
             'total_extractions': len(self.extraction_times)
         }
+
+
+class FeatureExtractor(MLFeatureExtractor):
+    """List-returning wrapper around MLFeatureExtractor for test/API compatibility."""
+
+    def extract(self, text: str) -> list:
+        fv = super().extract(text)
+        return fv.to_numpy().tolist()
 
 
 # =============================================================================

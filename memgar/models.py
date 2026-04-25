@@ -115,7 +115,12 @@ class AnalysisResult:
     def is_threat(self) -> bool:
         """Check if result contains threats."""
         return self.decision != Decision.ALLOW or len(self.threats) > 0
-    
+
+    @property
+    def is_attack(self) -> bool:
+        """Alias for is_threat — checks if content is a detected attack."""
+        return self.is_threat
+
     @property
     def is_blocked(self) -> bool:
         """Check if content was blocked."""
