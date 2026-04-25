@@ -23,6 +23,8 @@ Threat ID Format:
 Total: 100 patterns
 """
 
+from __future__ import annotations
+
 import os
 import pickle
 import hashlib

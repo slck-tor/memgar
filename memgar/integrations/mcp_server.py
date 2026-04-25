@@ -33,6 +33,8 @@ CLI Usage:
 For more information, visit https://memgar.io
 """
 
+from __future__ import annotations
+
 __version__ = "0.5.3"
 __author__ = "Memgar"
 __license__ = "MIT"
