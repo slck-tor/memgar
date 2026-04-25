@@ -35,6 +35,8 @@ For more information, visit https://memgar.io
 
 from __future__ import annotations
 
+from typing import Optional
+
 __version__ = "0.5.16"
 __author__ = "Memgar"
 __license__ = "MIT"
@@ -524,12 +526,12 @@ class Memgar:
     
     # Shared singleton Analyzer — initialized once, reused across all Memgar instances
     # with default settings. Custom settings (use_llm, strict_mode) bypass singleton.
-    _default_analyzer: "Analyzer | None" = None
+    _default_analyzer: Optional["Analyzer"] = None
 
     def __init__(
         self,
         use_llm: bool = False,
-        api_key: str | None = None,
+        api_key: Optional[str] = None,
         strict_mode: bool = False,
     ) -> None:
         """
@@ -555,7 +557,7 @@ class Memgar:
         self, 
         content: str, 
         source_type: str = "unknown", 
-        source_id: str | None = None
+        source_id: Optional[str] = None
     ) -> AnalysisResult:
         """
         Analyze content for memory poisoning threats.
