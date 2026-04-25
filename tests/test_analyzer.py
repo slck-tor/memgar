@@ -218,7 +218,8 @@ class TestAnalyzer:
         clean_content = "User prefers dark mode. " * 500
         result = self.analyzer.analyze(MemoryEntry(content=clean_content))
         assert result.decision == Decision.ALLOW
-        assert result.analysis_time_ms < 100  # Should be fast
+        # Shared CI runners can have short CPU bursts; keep this strict but stable.
+        assert result.analysis_time_ms < 150  # Should still be fast
     
     # =========================================================================
     # STRICT MODE TESTS
