@@ -1853,7 +1853,7 @@ def get_patterns_by_category(category: ThreatCategory) -> list[Threat]:
     return [p for p in PATTERNS if p.category == category]
 
 
-def get_pattern_by_id(threat_id: str) -> Threat | None:
+def get_pattern_by_id(threat_id: str) -> "Threat | None":
     """Get a specific pattern by its ID."""
     for pattern in PATTERNS:
         if pattern.id == threat_id:
