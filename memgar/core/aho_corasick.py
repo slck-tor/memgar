@@ -34,10 +34,10 @@ Usage:
 
 from __future__ import annotations
 
+import sys
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-import sys
 from enum import Enum
 from typing import (
     Dict,
