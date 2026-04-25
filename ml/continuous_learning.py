@@ -35,12 +35,20 @@ import time
 import pickle
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta
 from collections import defaultdict
 import numpy as np
+
+from ml.training.hard_negative_miner import HardNegativeMiner, merge_training_examples
+
+try:
+    from memgar.learning import PatternEvolutionEngine
+except Exception:  # pragma: no cover
+    PatternEvolutionEngine = None  # type: ignore
 
 # Setup logging
 logging.basicConfig(
@@ -500,7 +508,32 @@ class AutoRetrainer:
     def __init__(self, storage: StorageManager):
         self.storage = storage
         self.logger = logging.getLogger('AutoRetrainer')
-    
+        self.hard_negative_miner = HardNegativeMiner()
+
+    def _load_active_feedback_rows(self) -> List[Dict[str, Any]]:
+        """
+        Load text-preserving feedback rows written by collect_feedback().
+
+        Format: JSONL at <storage>/active_feedback.jsonl
+        """
+        rows: List[Dict[str, Any]] = []
+        path = self.storage.base_path / "active_feedback.jsonl"
+        if not path.exists():
+            return rows
+
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(item, dict) and item.get("text"):
+                    rows.append(item)
+        return rows
+
     def retrain(self, min_new_samples: int = 500) -> Dict:
         """
         Retrain model with new feedback data.
@@ -513,20 +546,22 @@ class AutoRetrainer:
         """
         self.logger.info("Starting automated retraining...")
         
-        # 1. Get labeled feedback
+        # 1. Get labeled feedback (hashed stream + text-preserving active-learning stream)
         feedback_data = self.storage.get_labeled_data(days=30)
-        
-        if len(feedback_data) < min_new_samples:
+        active_feedback_rows = self._load_active_feedback_rows()
+        total_new = len(feedback_data) + len(active_feedback_rows)
+
+        if total_new < min_new_samples:
             self.logger.warning(
-                f"Insufficient samples: {len(feedback_data)} < {min_new_samples}"
+                f"Insufficient samples: {total_new} < {min_new_samples}"
             )
             return {
                 'success': False,
                 'reason': 'insufficient_samples',
-                'sample_count': len(feedback_data)
+                'sample_count': total_new
             }
         
-        self.logger.info(f"Found {len(feedback_data)} new labeled samples")
+        self.logger.info(f"Found {total_new} new labeled samples")
         
         # 2. Load original training data
         try:
@@ -536,19 +571,44 @@ class AutoRetrainer:
             self.logger.error("Original training data not found")
             return {'success': False, 'reason': 'missing_original_data'}
         
-        # 3. Merge datasets
+        # 3. Build new samples from hashed feedback (privacy-preserving fallback)
         new_samples = [
             {
                 'text': f"sample_{p.content_hash}",  # Placeholder
                 'label': 1 if p.actual_attack else 0,
                 'category': 'production_feedback',
                 'subcategory': p.feedback,
-                'confidence': 1.0
+                'confidence': 1.0,
+                'source': 'hashed_feedback',
+                'weight': 1.0,
             }
             for p in feedback_data
         ]
-        
-        merged_data = original_data + new_samples
+
+        # 3b. Add text-preserving active-learning rows
+        for row in active_feedback_rows:
+            new_samples.append(
+                {
+                    'text': str(row.get('text', '')),
+                    'label': int(row.get('actual', row.get('actual_label', 0))),
+                    'category': 'production_feedback',
+                    'subcategory': str(row.get('feedback', row.get('source', 'active_learning'))),
+                    'confidence': float(row.get('confidence', 1.0)),
+                    'source': 'active_learning',
+                    'weight': 1.0,
+                }
+            )
+
+        # 3c. Mine hard negatives from false positives
+        hard_neg_candidates = self.hard_negative_miner.from_feedback(active_feedback_rows, max_samples=1500)
+        hard_negative_rows = self.hard_negative_miner.to_training_examples(hard_neg_candidates)
+
+        merged_new_samples = merge_training_examples(
+            new_samples,
+            hard_negative_rows,
+            max_added_negative_ratio=0.35,
+        )
+        merged_data = original_data + merged_new_samples
         
         # 4. Save merged dataset
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -562,11 +622,18 @@ class AutoRetrainer:
         # 5. Train new model
         try:
             # Import training pipeline
-            import sys
-            sys.path.insert(0, 'ml/training')
-            from train import XGBoostTrainingPipeline
+            try:
+                from ml.training.train import XGBoostTrainingPipeline
+            except Exception:
+                import sys
+                sys.path.insert(0, 'ml/training')
+                from train import XGBoostTrainingPipeline
             
-            pipeline = XGBoostTrainingPipeline(random_state=42)
+            pipeline = XGBoostTrainingPipeline(
+                random_state=42,
+                estimator="auto",
+                calibrate_method="isotonic",
+            )
             
             # Prepare data
             texts = [ex['text'] for ex in merged_data]
@@ -575,14 +642,21 @@ class AutoRetrainer:
             y = np.array(labels)
             X = pipeline.extract_features(texts, show_progress=False)
             
-            # Split
-            X_train, X_test, y_train, y_test = pipeline.split_data(X, y)
+            # Split train/val/test
+            X_train, X_tmp, y_train, y_tmp = pipeline.split_data(X, y, test_size=0.3)
+            X_val, X_test, y_val, y_test = pipeline.split_data(X_tmp, y_tmp, test_size=0.5)
             
-            # Train
-            pipeline.train_xgboost(X_train, y_train, X_test, y_test)
+            # Train + calibrate
+            pipeline.train_xgboost(
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                calibrate=True,
+            )
             
             # Validate
-            metrics = pipeline.evaluate(X_test, y_test)
+            metrics = pipeline.evaluate(X_test, y_test, threshold=0.5, use_calibrated=True)
             
             # Save new model
             new_model_path = f'ml/artifacts/gradient_boost_model_v{timestamp}.pkl'
@@ -601,7 +675,8 @@ class AutoRetrainer:
                     'recall': metrics.recall
                 },
                 'sample_count': len(merged_data),
-                'new_samples': len(new_samples)
+                'new_samples': len(merged_new_samples),
+                'hard_negative_samples': len(hard_negative_rows),
             }
         
         except Exception as e:
@@ -649,7 +724,6 @@ class ContinuousLearning:
         if feedback_dir is not None:
             storage_path = feedback_dir
         elif model_path is not None:
-            import os
             storage_path = os.path.dirname(model_path) or storage_path
 
         self.storage = StorageManager(storage_path)
@@ -669,6 +743,10 @@ class ContinuousLearning:
         # Simple in-memory feedback store (lightweight, no full prediction pipeline)
         self._feedback: List[Dict] = []
         self._version: int = 1
+        self._active_feedback_file = self.storage.base_path / "active_feedback.jsonl"
+
+        # Optional drift/evolution engine from memgar.learning
+        self.pattern_evolver = PatternEvolutionEngine() if PatternEvolutionEngine is not None else None
 
         # Get baseline metrics (from initial training)
         self.baseline_metrics = self._get_baseline_metrics()
@@ -774,8 +852,16 @@ class ContinuousLearning:
         
         self.logger.info(f"Drift check: {drift_report.recommendation}")
         
-        # 4. Retrain if needed
-        if drift_report.should_retrain:
+        # 4. Pattern-drift / attack-evolution analysis from active-learning feedback
+        pattern_drift = self._analyze_pattern_drift()
+        pattern_retrain_signal = bool(
+            pattern_drift
+            and pattern_drift.get('drift_detected')
+            and float(pattern_drift.get('drift_score', 0.0)) >= 0.25
+        )
+
+        # 5. Retrain if needed
+        if drift_report.should_retrain or pattern_retrain_signal:
             self.logger.info("Triggering automated retraining...")
             
             retrain_result = self.retrainer.retrain()
@@ -806,13 +892,54 @@ class ContinuousLearning:
             
             return {
                 'drift': asdict(drift_report),
+                'pattern_drift': pattern_drift,
                 'retrain': retrain_result
             }
         
         return {
             'drift': asdict(drift_report),
+            'pattern_drift': pattern_drift,
             'retrain': None
         }
+
+    def _analyze_pattern_drift(self) -> Optional[Dict[str, Any]]:
+        """
+        Use PatternEvolutionEngine to detect evolving attack language.
+
+        Relies on text-preserving feedback entries produced by collect_feedback().
+        """
+        if self.pattern_evolver is None:
+            return None
+        if not self._feedback:
+            return None
+
+        attack_samples = [f["text"] for f in self._feedback if int(f.get("actual", 0)) == 1 and f.get("text")]
+        blocked_samples = [
+            f["text"]
+            for f in self._feedback
+            if int(f.get("actual", 0)) == 1 and int(f.get("predicted", 0)) == 1 and f.get("text")
+        ]
+        if len(attack_samples) < 8:
+            return None
+
+        try:
+            report = self.pattern_evolver.detect_drift(
+                pattern_name="ml_semantic_attack_pattern",
+                original_pattern=r"(ignore|bypass|disregard|override)",
+                attack_samples=attack_samples[:500],
+                blocked_samples=blocked_samples[:500],
+            )
+            return {
+                "drift_detected": bool(report.drift_detected),
+                "drift_score": float(report.drift_score),
+                "pattern_name": report.pattern_name,
+                "evasion_count": len(report.evasion_samples),
+                "variant_count": len(report.proposed_variants),
+                "explanation": report.explanation,
+            }
+        except Exception as exc:
+            self.logger.warning(f"Pattern drift analysis failed: {exc}")
+            return None
     
     # -------------------------------------------------------------------------
     # Simplified test-friendly API
@@ -826,24 +953,24 @@ class ContinuousLearning:
         confidence: float = 1.0,
     ) -> None:
         """Collect a labelled feedback sample (simplified API)."""
-        import json, os
         entry = {
-            "text": text,
-            "predicted": predicted_label,
-            "actual": actual_label,
-            "confidence": confidence,
+            "text": str(text),
+            "predicted": int(predicted_label),
+            "actual": int(actual_label),
+            "predicted_label": int(predicted_label),
+            "actual_label": int(actual_label),
+            "confidence": float(confidence),
             "correct": predicted_label == actual_label,
+            "source": "collect_feedback",
+            "timestamp": time.time(),
         }
         self._feedback.append(entry)
-        # Also persist to disk so test_feedback_persistence passes
+
+        # Persist to JSONL stream for active learning
         try:
             os.makedirs(str(self.storage.base_path), exist_ok=True)
-            feedback_file = os.path.join(
-                str(self.storage.base_path),
-                f"feedback_{len(self._feedback)}.json",
-            )
-            with open(feedback_file, "w") as fh:
-                json.dump(entry, fh)
+            with open(self._active_feedback_file, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception:
             pass
 
@@ -881,9 +1008,11 @@ class ContinuousLearning:
         return {
             'predictions_last_7_days': len(predictions),
             'labeled_data_count': len(labeled),
+            'active_feedback_count': len(self._feedback),
             'latest_metrics': asdict(latest_metrics) if latest_metrics else None,
             'baseline_accuracy': self.baseline_metrics.accuracy,
-            'storage_path': str(self.storage.base_path)
+            'storage_path': str(self.storage.base_path),
+            'active_feedback_file': str(self._active_feedback_file),
         }
 
 

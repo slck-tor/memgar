@@ -1,46 +1,71 @@
 """
-XGBoost Training Pipeline for ML Semantic Classifier
-====================================================
+Production training pipeline for Memgar semantic ML detector.
 
-Complete production pipeline:
-1. Load training data
-2. Extract features using MLFeatureExtractor
-3. Train XGBoost classifier
-4. Cross-validation (5-fold)
-5. Hyperparameter tuning
-6. Model evaluation
-7. Save trained model
-
-Target: 95%+ accuracy with cross-validation
-
-Author: Memgar AI Security
-Version: 1.0.0
+Highlights:
+- Gradient Boosting (or LightGBM when available) training
+- Probability calibration (isotonic / sigmoid)
+- Hard-negative augmentation support
+- Backwards-compatible API with existing scripts/tests
 """
 
+from __future__ import annotations
+
 import json
-import numpy as np
 import pickle
 import time
-from typing import List, Dict, Tuple
 from dataclasses import dataclass
-import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-# Use sklearn GradientBoosting (similar to XGBoost, already installed)
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import warnings
-warnings.filterwarnings('ignore')
+import numpy as np
 
-XGBOOST_AVAILABLE = False  # Using sklearn instead
+from ml.training.ml_feature_extractor import FeatureVector, MLFeatureExtractor
+from ml.training.hard_negative_miner import merge_training_examples
 
-# Add path for feature extractor
-sys.path.insert(0, '/home/claude/test_env')
-from ml_feature_extractor_v3 import MLFeatureExtractor, FeatureVector
+
+def _maybe_import_lightgbm():
+    try:
+        from lightgbm import LGBMClassifier  # type: ignore
+        return LGBMClassifier
+    except Exception:
+        return None
+
+
+def _require_sklearn():
+    from sklearn.calibration import CalibratedClassifierCV  # type: ignore
+    from sklearn.ensemble import GradientBoostingClassifier  # type: ignore
+    from sklearn.metrics import (  # type: ignore
+        log_loss,
+        roc_auc_score,
+    )
+    from sklearn.model_selection import StratifiedKFold, train_test_split  # type: ignore
+    return (
+        GradientBoostingClassifier,
+        CalibratedClassifierCV,
+        train_test_split,
+        StratifiedKFold,
+        log_loss,
+        roc_auc_score,
+    )
+
+
+@dataclass
+class TrainingExample:
+    """Single training row."""
+
+    text: str
+    label: int
+    category: str = "unknown"
+    subcategory: str = "unknown"
+    confidence: float = 1.0
+    source: str = "dataset"
+    weight: float = 1.0
 
 
 @dataclass
 class ModelMetrics:
-    """Model performance metrics"""
+    """Evaluation metrics for binary classifier."""
+
     accuracy: float
     precision: float
     recall: float
@@ -49,425 +74,401 @@ class ModelMetrics:
     true_negatives: int
     false_positives: int
     false_negatives: int
-    
-    def __str__(self):
-        return f"""
-Performance Metrics:
-  Accuracy:  {self.accuracy:.4f}
-  Precision: {self.precision:.4f}
-  Recall:    {self.recall:.4f}
-  F1 Score:  {self.f1_score:.4f}
-  
-Confusion Matrix:
-  TP: {self.true_positives:4d}  FN: {self.false_negatives:4d}
-  FP: {self.false_positives:4d}  TN: {self.true_negatives:4d}
-"""
+    brier_score: float = 0.0
+    roc_auc: float = 0.0
+    log_loss: float = 0.0
 
 
 class XGBoostTrainingPipeline:
     """
-    Complete XGBoost training pipeline.
-    
-    Features:
-    - Automatic feature extraction
-    - Cross-validation
-    - Hyperparameter tuning
-    - Model persistence
-    - Performance monitoring
+    Backwards-compatible training pipeline.
+
+    Name retained for compatibility; estimator can be:
+    - auto (LightGBM when available, else GradientBoosting)
+    - lightgbm
+    - gradient_boosting
     """
-    
-    def __init__(self, random_state: int = 42):
+
+    def __init__(
+        self,
+        random_state: int = 42,
+        estimator: str = "auto",
+        calibrate_method: str = "isotonic",
+        min_calibration_samples: int = 250,
+    ):
         self.random_state = random_state
+        self.estimator_name = estimator
+        self.calibrate_method = calibrate_method
+        self.min_calibration_samples = min_calibration_samples
+
         self.feature_extractor = MLFeatureExtractor()
         self.model = None
-        self.feature_importance = None
-        self.training_history = []
-    
+        self.calibrated_model = None
+        self.feature_importance: Dict[str, float] = {}
+        self.training_history: List[Dict[str, Any]] = []
+
+    # ---------------------------------------------------------------------
+    # Data loading
+    # ---------------------------------------------------------------------
+
+    def load_training_examples(self, filename: str) -> List[TrainingExample]:
+        """Load rich training examples from JSON file."""
+        with open(filename, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        examples: List[TrainingExample] = []
+        for row in raw:
+            examples.append(
+                TrainingExample(
+                    text=str(row.get("text", "")),
+                    label=int(row.get("label", 0)),
+                    category=str(row.get("category", "unknown")),
+                    subcategory=str(row.get("subcategory", "unknown")),
+                    confidence=float(row.get("confidence", 1.0)),
+                    source=str(row.get("source", "dataset")),
+                    weight=float(row.get("weight", 1.0)),
+                )
+            )
+        return examples
+
     def load_training_data(self, filename: str) -> Tuple[List[str], List[int]]:
         """
-        Load training data from JSON file.
-        
-        Returns:
-            (texts, labels)
+        Backwards-compatible loader returning (texts, labels).
         """
-        print(f"Loading training data from {filename}...")
-        
-        with open(filename, 'r') as f:
-            data = json.load(f)
-        
-        texts = [ex['text'] for ex in data]
-        labels = [ex['label'] for ex in data]
-        
-        print(f"✅ Loaded {len(texts)} examples")
-        print(f"   Attacks: {sum(labels)} ({sum(labels)/len(labels)*100:.1f}%)")
-        print(f"   Legitimate: {len(labels)-sum(labels)} ({(len(labels)-sum(labels))/len(labels)*100:.1f}%)")
-        print()
-        
+        examples = self.load_training_examples(filename)
+        texts = [ex.text for ex in examples]
+        labels = [ex.label for ex in examples]
         return texts, labels
-    
+
     def extract_features(self, texts: List[str], show_progress: bool = True) -> np.ndarray:
-        """
-        Extract features from texts using MLFeatureExtractor.
-        
-        Returns:
-            Feature matrix (n_samples, n_features)
-        """
-        print(f"Extracting features from {len(texts)} examples...")
-        
-        features_list = []
+        """Extract numeric feature matrix."""
+        features_list: List[np.ndarray] = []
         start_time = time.time()
-        
+        total = max(1, len(texts))
+
         for i, text in enumerate(texts):
-            if show_progress and (i + 1) % 1000 == 0:
+            if show_progress and (i + 1) % 2000 == 0:
                 elapsed = time.time() - start_time
-                rate = (i + 1) / elapsed
-                eta = (len(texts) - i - 1) / rate
-                print(f"  Progress: {i+1}/{len(texts)} ({(i+1)/len(texts)*100:.1f}%) - ETA: {eta:.1f}s")
-            
-            feature_vector = self.feature_extractor.extract(text)
-            features_list.append(feature_vector.to_numpy())
-        
-        features = np.vstack(features_list)
-        
-        elapsed = time.time() - start_time
-        print(f"✅ Feature extraction complete in {elapsed:.2f}s")
-        print(f"   Feature matrix shape: {features.shape}")
-        print(f"   Average time per example: {elapsed/len(texts)*1000:.2f}ms")
-        print()
-        
-        return features
-    
-    def split_data(self, X: np.ndarray, y: np.ndarray, 
-                   test_size: float = 0.2) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Split data into train/test sets.
-        
-        Args:
-            X: Feature matrix
-            y: Labels
-            test_size: Fraction for test set
-        
-        Returns:
-            X_train, X_test, y_train, y_test
-        """
-        n_samples = len(X)
-        n_test = int(n_samples * test_size)
-        
-        # Shuffle indices
-        np.random.seed(self.random_state)
-        indices = np.random.permutation(n_samples)
-        
-        # Split
-        test_indices = indices[:n_test]
-        train_indices = indices[n_test:]
-        
-        X_train = X[train_indices]
-        X_test = X[test_indices]
-        y_train = y[train_indices]
-        y_test = y[test_indices]
-        
-        print(f"Data split:")
-        print(f"  Train: {len(X_train)} examples ({len(X_train)/n_samples*100:.1f}%)")
-        print(f"  Test:  {len(X_test)} examples ({len(X_test)/n_samples*100:.1f}%)")
-        print()
-        
-        return X_train, X_test, y_train, y_test
-    
-    def train_xgboost(self, X_train: np.ndarray, y_train: np.ndarray,
-                     X_val: np.ndarray = None, y_val: np.ndarray = None,
-                     params: Dict = None):
-        """
-        Train Gradient Boosting model (sklearn implementation).
-        
-        Args:
-            X_train: Training features
-            y_train: Training labels
-            X_val: Validation features (optional)
-            y_val: Validation labels (optional)
-            params: Model parameters (optional)
-        
-        Returns:
-            Trained model
-        """
-        print("Training Gradient Boosting model (sklearn)...")
-        
-        # Default parameters (optimized for binary classification)
-        if params is None:
-            params = {
-                'n_estimators': 100,
-                'max_depth': 6,
-                'learning_rate': 0.1,
-                'subsample': 0.8,
-                'min_samples_split': 3,
-                'min_samples_leaf': 1,
-                'random_state': self.random_state,
-                'verbose': 0
-            }
-        
-        # Train
-        start_time = time.time()
-        
-        self.model = GradientBoostingClassifier(**params)
-        self.model.fit(X_train, y_train)
-        
-        elapsed = time.time() - start_time
-        print(f"✅ Training complete in {elapsed:.2f}s")
-        
-        # Validation score if provided
-        if X_val is not None and y_val is not None:
-            val_score = self.model.score(X_val, y_val)
-            print(f"   Validation accuracy: {val_score:.4f}")
-        
-        print()
-        
-        # Feature importance
-        self.feature_importance = {
-            f'f{i}': imp for i, imp in enumerate(self.model.feature_importances_)
+                rate = (i + 1) / max(1e-9, elapsed)
+                remaining = (total - i - 1) / max(1e-9, rate)
+                print(f"  Progress: {i+1}/{total} ({(i+1)/total*100:.1f}%) ETA: {remaining:.1f}s")
+
+            fv = self.feature_extractor.extract(text)
+            features_list.append(fv.to_numpy())
+
+        if not features_list:
+            return np.zeros((0, len(FeatureVector().to_numpy())), dtype=np.float32)
+        return np.vstack(features_list)
+
+    def split_data(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        test_size: float = 0.2,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Stratified train/test split."""
+        (
+            _GradientBoostingClassifier,
+            _CalibratedClassifierCV,
+            train_test_split,
+            _StratifiedKFold,
+            _log_loss,
+            _roc_auc_score,
+        ) = _require_sklearn()
+        return train_test_split(
+            X,
+            y,
+            test_size=test_size,
+            random_state=self.random_state,
+            stratify=y if len(np.unique(y)) > 1 else None,
+        )
+
+    # ---------------------------------------------------------------------
+    # Training / calibration
+    # ---------------------------------------------------------------------
+
+    def _build_estimator(self, params: Optional[Dict[str, Any]] = None):
+        (
+            GradientBoostingClassifier,
+            _CalibratedClassifierCV,
+            _train_test_split,
+            _StratifiedKFold,
+            _log_loss,
+            _roc_auc_score,
+        ) = _require_sklearn()
+
+        params = dict(params or {})
+        estimator_name = (self.estimator_name or "auto").lower()
+        if estimator_name == "auto":
+            estimator_name = "lightgbm" if _maybe_import_lightgbm() is not None else "gradient_boosting"
+
+        if estimator_name == "lightgbm":
+            LGBMClassifier = _maybe_import_lightgbm()
+            if LGBMClassifier is not None:
+                defaults = {
+                    "n_estimators": 220,
+                    "learning_rate": 0.06,
+                    "max_depth": -1,
+                    "num_leaves": 31,
+                    "subsample": 0.9,
+                    "colsample_bytree": 0.9,
+                    "random_state": self.random_state,
+                }
+                defaults.update(params)
+                return LGBMClassifier(**defaults)
+
+        # Fallback and default: sklearn GradientBoostingClassifier
+        defaults = {
+            "n_estimators": 140,
+            "max_depth": 3,
+            "learning_rate": 0.08,
+            "subsample": 0.85,
+            "random_state": self.random_state,
         }
-        
+        defaults.update(params)
+        return GradientBoostingClassifier(**defaults)
+
+    def train_xgboost(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        X_val: Optional[np.ndarray] = None,
+        y_val: Optional[np.ndarray] = None,
+        params: Optional[Dict[str, Any]] = None,
+        sample_weight: Optional[np.ndarray] = None,
+        calibrate: bool = True,
+    ):
+        """
+        Backwards-compatible training entrypoint.
+        """
+        start = time.time()
+        self.model = self._build_estimator(params=params)
+        fit_kwargs: Dict[str, Any] = {}
+        if sample_weight is not None:
+            fit_kwargs["sample_weight"] = sample_weight
+        self.model.fit(X_train, y_train, **fit_kwargs)
+
+        self.calibrated_model = None
+        if calibrate and X_val is not None and y_val is not None:
+            self.calibrate_model(X_val, y_val)
+
+        self.feature_importance = self._extract_feature_importance()
+        self.training_history.append(
+            {
+                "timestamp": time.time(),
+                "duration_sec": round(time.time() - start, 3),
+                "estimator": type(self.model).__name__,
+                "calibrated": self.calibrated_model is not None,
+                "train_samples": int(len(X_train)),
+                "val_samples": int(len(X_val)) if X_val is not None else 0,
+            }
+        )
         return self.model
-    
-    def evaluate(self, X: np.ndarray, y: np.ndarray, 
-                threshold: float = 0.5) -> ModelMetrics:
-        """
-        Evaluate model performance.
-        
-        Args:
-            X: Feature matrix
-            y: True labels
-            threshold: Classification threshold
-        
-        Returns:
-            ModelMetrics object
-        """
-        # Predict
-        y_pred_proba = self.model.predict_proba(X)[:, 1]  # Probability of class 1
-        y_pred = (y_pred_proba >= threshold).astype(int)
-        
-        # Calculate metrics
-        tp = np.sum((y == 1) & (y_pred == 1))
-        tn = np.sum((y == 0) & (y_pred == 0))
-        fp = np.sum((y == 0) & (y_pred == 1))
-        fn = np.sum((y == 1) & (y_pred == 0))
-        
-        accuracy = (tp + tn) / len(y)
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-        
+
+    def calibrate_model(self, X_cal: np.ndarray, y_cal: np.ndarray, method: Optional[str] = None):
+        """Calibrate probabilities with isotonic/sigmoid."""
+        (
+            _GradientBoostingClassifier,
+            CalibratedClassifierCV,
+            _train_test_split,
+            _StratifiedKFold,
+            _log_loss,
+            _roc_auc_score,
+        ) = _require_sklearn()
+
+        if self.model is None:
+            return None
+        if len(y_cal) < self.min_calibration_samples:
+            return None
+        if len(np.unique(y_cal)) < 2:
+            return None
+
+        selected_method = (method or self.calibrate_method or "isotonic").lower()
+        if selected_method not in {"isotonic", "sigmoid"}:
+            selected_method = "isotonic"
+
+        calibrated = CalibratedClassifierCV(self.model, method=selected_method, cv="prefit")
+        calibrated.fit(X_cal, y_cal)
+        self.calibrated_model = calibrated
+        return calibrated
+
+    # ---------------------------------------------------------------------
+    # Evaluation
+    # ---------------------------------------------------------------------
+
+    def _predict_proba(self, X: np.ndarray, use_calibrated: bool = True) -> np.ndarray:
+        model = self.calibrated_model if (use_calibrated and self.calibrated_model is not None) else self.model
+        if model is None:
+            raise RuntimeError("Model has not been trained.")
+        return model.predict_proba(X)[:, 1]
+
+    def evaluate(self, X: np.ndarray, y: np.ndarray, threshold: float = 0.5, use_calibrated: bool = True) -> ModelMetrics:
+        """Evaluate model with thresholded decisions + probability metrics."""
+        (
+            _GradientBoostingClassifier,
+            _CalibratedClassifierCV,
+            _train_test_split,
+            _StratifiedKFold,
+            log_loss,
+            roc_auc_score,
+        ) = _require_sklearn()
+
+        y_prob = self._predict_proba(X, use_calibrated=use_calibrated)
+        y_pred = (y_prob >= threshold).astype(int)
+
+        tp = int(np.sum((y == 1) & (y_pred == 1)))
+        tn = int(np.sum((y == 0) & (y_pred == 0)))
+        fp = int(np.sum((y == 0) & (y_pred == 1)))
+        fn = int(np.sum((y == 1) & (y_pred == 0)))
+
+        total = max(1, len(y))
+        accuracy = (tp + tn) / total
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        f1 = 2 * precision * recall / max(1e-9, precision + recall)
+        brier = float(np.mean((y_prob - y) ** 2))
+
+        auc = 0.0
+        ll = 0.0
+        if len(np.unique(y)) > 1:
+            auc = float(roc_auc_score(y, y_prob))
+            ll = float(log_loss(y, np.vstack([1.0 - y_prob, y_prob]).T))
+
         return ModelMetrics(
-            accuracy=accuracy,
-            precision=precision,
-            recall=recall,
-            f1_score=f1,
+            accuracy=float(accuracy),
+            precision=float(precision),
+            recall=float(recall),
+            f1_score=float(f1),
             true_positives=tp,
             true_negatives=tn,
             false_positives=fp,
-            false_negatives=fn
+            false_negatives=fn,
+            brier_score=brier,
+            roc_auc=auc,
+            log_loss=ll,
         )
-    
-    def cross_validate(self, X: np.ndarray, y: np.ndarray, 
-                      n_folds: int = 5) -> List[ModelMetrics]:
-        """
-        Perform k-fold cross-validation.
-        
-        Args:
-            X: Feature matrix
-            y: Labels
-            n_folds: Number of folds
-        
-        Returns:
-            List of metrics for each fold
-        """
-        print(f"Performing {n_folds}-fold cross-validation...")
-        print()
-        
-        n_samples = len(X)
-        fold_size = n_samples // n_folds
-        
-        # Shuffle indices
-        np.random.seed(self.random_state)
-        indices = np.random.permutation(n_samples)
-        
-        metrics_list = []
-        
-        for fold in range(n_folds):
-            print(f"Fold {fold + 1}/{n_folds}:")
-            
-            # Split indices
-            val_start = fold * fold_size
-            val_end = val_start + fold_size if fold < n_folds - 1 else n_samples
-            val_indices = indices[val_start:val_end]
-            train_indices = np.concatenate([indices[:val_start], indices[val_end:]])
-            
-            # Split data
-            X_train_fold = X[train_indices]
-            y_train_fold = y[train_indices]
-            X_val_fold = X[val_indices]
-            y_val_fold = y[val_indices]
-            
-            # Train
-            self.train_xgboost(X_train_fold, y_train_fold, X_val_fold, y_val_fold)
-            
-            # Evaluate
-            metrics = self.evaluate(X_val_fold, y_val_fold)
-            metrics_list.append(metrics)
-            
-            print(f"  Accuracy: {metrics.accuracy:.4f}")
-            print(f"  F1 Score: {metrics.f1_score:.4f}")
-            print()
-        
-        # Average metrics
-        avg_accuracy = np.mean([m.accuracy for m in metrics_list])
-        avg_f1 = np.mean([m.f1_score for m in metrics_list])
-        
-        print("="*70)
-        print(f"Cross-Validation Results ({n_folds} folds):")
-        print(f"  Average Accuracy: {avg_accuracy:.4f} (± {np.std([m.accuracy for m in metrics_list]):.4f})")
-        print(f"  Average F1 Score: {avg_f1:.4f} (± {np.std([m.f1_score for m in metrics_list]):.4f})")
-        print("="*70)
-        print()
-        
-        return metrics_list
-    
-    def save_model(self, filename: str):
-        """Save trained model to file"""
+
+    def cross_validate(self, X: np.ndarray, y: np.ndarray, n_folds: int = 5) -> List[ModelMetrics]:
+        """Stratified k-fold validation."""
+        (
+            _GradientBoostingClassifier,
+            _CalibratedClassifierCV,
+            _train_test_split,
+            StratifiedKFold,
+            _log_loss,
+            _roc_auc_score,
+        ) = _require_sklearn()
+
+        fold_metrics: List[ModelMetrics] = []
+        splitter = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=self.random_state)
+        for train_idx, val_idx in splitter.split(X, y):
+            model = self._build_estimator()
+            model.fit(X[train_idx], y[train_idx])
+            self.model = model
+            self.calibrated_model = None
+            fold_metrics.append(self.evaluate(X[val_idx], y[val_idx], threshold=0.5, use_calibrated=False))
+        return fold_metrics
+
+    # ---------------------------------------------------------------------
+    # Persistence
+    # ---------------------------------------------------------------------
+
+    def _extract_feature_importance(self) -> Dict[str, float]:
         if self.model is None:
-            print("❌ No model to save. Train a model first.")
-            return
-        
-        # Save sklearn model with pickle
-        with open(filename, 'wb') as f:
-            pickle.dump(self.model, f)
-        
-        # Also save feature extractor config (for reproducibility)
+            return {}
+        importances = getattr(self.model, "feature_importances_", None)
+        if importances is None:
+            return {}
+        return {f"f{i}": float(v) for i, v in enumerate(importances)}
+
+    def save_model(self, filename: str):
+        """
+        Save model for runtime compatibility.
+
+        Runtime expects a pickled estimator with .predict_proba, so we store the
+        calibrated estimator when available, otherwise base model.
+        """
+        if self.model is None:
+            raise RuntimeError("No model to save. Train first.")
+
+        target = self.calibrated_model if self.calibrated_model is not None else self.model
+        with open(filename, "wb") as f:
+            pickle.dump(target, f)
+
         config = {
-            'random_state': self.random_state,
-            'feature_names': FeatureVector().get_feature_names(),
-            'n_features': 40,
-            'feature_importance': self.feature_importance
+            "schema_version": 2,
+            "estimator": type(self.model).__name__,
+            "calibrated_estimator": type(target).__name__,
+            "is_calibrated": self.calibrated_model is not None,
+            "calibration_method": self.calibrate_method if self.calibrated_model is not None else None,
+            "random_state": self.random_state,
+            "n_features": len(FeatureVector().to_numpy()),
+            "feature_names": FeatureVector().get_feature_names(),
+            "feature_importance": self.feature_importance,
+            "training_history": self.training_history[-5:],
         }
-        
-        with open(filename + '.config.json', 'w') as f:
+        with open(f"{filename}.config.json", "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-        
-        print(f"✅ Model saved to {filename}")
-        print(f"✅ Config saved to {filename}.config.json")
-    
+
     def load_model(self, filename: str):
-        """Load trained model from file"""
-        with open(filename, 'rb') as f:
-            self.model = pickle.load(f)
-        
-        # Load config
-        try:
-            with open(filename + '.config.json', 'r') as f:
-                config = json.load(f)
-            self.feature_importance = config.get('feature_importance', {})
-            print(f"✅ Model loaded from {filename}")
-        except FileNotFoundError:
-            print(f"✅ Model loaded from {filename} (no config file)")
-    
-    def print_feature_importance(self, top_n: int = 10):
-        """Print top N most important features"""
-        if not self.feature_importance:
-            print("❌ No feature importance available")
-            return
-        
-        # Sort by importance
-        sorted_features = sorted(
-            self.feature_importance.items(),
-            key=lambda x: x[1],
-            reverse=True
+        """Load runtime model (calibrated or base estimator)."""
+        with open(filename, "rb") as f:
+            loaded = pickle.load(f)
+        self.model = loaded
+        self.calibrated_model = loaded
+        return loaded
+
+    # ---------------------------------------------------------------------
+    # Data augmentation hooks
+    # ---------------------------------------------------------------------
+
+    def augment_with_hard_negatives(
+        self,
+        base_examples: Sequence[TrainingExample],
+        hard_negative_examples: Sequence[TrainingExample],
+        max_negative_ratio: float = 0.35,
+    ) -> List[TrainingExample]:
+        """Merge dataset while preventing negative-class explosion."""
+        return merge_training_examples(
+            list(base_examples),
+            list(hard_negative_examples),
+            max_added_negative_ratio=max_negative_ratio,
         )
-        
-        print(f"Top {top_n} Most Important Features:")
-        print("="*50)
-        for i, (feature, importance) in enumerate(sorted_features[:top_n], 1):
-            print(f"{i:2d}. {feature:30s} {importance:8.2f}")
 
-
-# =============================================================================
-# MAIN TRAINING PIPELINE
-# =============================================================================
 
 def main():
-    """Run complete training pipeline"""
-    
-    print("="*70)
-    print("XGBOOST TRAINING PIPELINE")
-    print("="*70)
-    print()
-    
-    # Initialize pipeline
-    pipeline = XGBoostTrainingPipeline(random_state=42)
-    
-    # Step 1: Load data
-    texts, labels = pipeline.load_training_data('/mnt/user-data/outputs/training_data.json')
-    y = np.array(labels)
-    
-    # Step 2: Extract features
-    X = pipeline.extract_features(texts)
-    
-    # Step 3: Split data
-    X_train, X_test, y_train, y_test = pipeline.split_data(X, y, test_size=0.2)
-    
-    # Step 4: Train model
-    print("="*70)
-    print("TRAINING XGBOOST MODEL")
-    print("="*70)
-    print()
-    
-    pipeline.train_xgboost(X_train, y_train, X_test, y_test)
-    
-    # Step 5: Evaluate on test set
-    print("="*70)
-    print("TEST SET EVALUATION")
-    print("="*70)
-    
-    test_metrics = pipeline.evaluate(X_test, y_test)
-    print(test_metrics)
-    
-    # Step 6: Cross-validation
-    print("="*70)
-    print("CROSS-VALIDATION")
-    print("="*70)
-    print()
-    
-    cv_metrics = pipeline.cross_validate(X, y, n_folds=5)
-    
-    # Step 7: Feature importance
-    print()
-    pipeline.print_feature_importance(top_n=15)
-    print()
-    
-    # Step 8: Save model
-    pipeline.save_model('/mnt/user-data/outputs/gradient_boost_model.pkl')
-    
-    print()
-    print("="*70)
-    print("✅ TRAINING PIPELINE COMPLETE!")
-    print("="*70)
-    
-    # Final summary
-    avg_cv_accuracy = np.mean([m.accuracy for m in cv_metrics])
-    avg_cv_f1 = np.mean([m.f1_score for m in cv_metrics])
-    
-    print()
-    print("FINAL SUMMARY:")
-    print(f"  Test Set Accuracy: {test_metrics.accuracy:.4f}")
-    print(f"  Test Set F1 Score: {test_metrics.f1_score:.4f}")
-    print(f"  CV Average Accuracy: {avg_cv_accuracy:.4f}")
-    print(f"  CV Average F1 Score: {avg_cv_f1:.4f}")
-    print()
-    
-    # Status
-    if avg_cv_accuracy >= 0.95 and avg_cv_f1 >= 0.95:
-        print("🎉 TARGET ACHIEVED: 95%+ accuracy and F1 score!")
-    elif avg_cv_accuracy >= 0.90:
-        print("✅ GOOD PERFORMANCE: 90%+ accuracy")
-    else:
-        print("⚠️ NEEDS IMPROVEMENT: Consider hyperparameter tuning")
+    """
+    Basic CLI runner:
+      python -m ml.training.train
+    """
+    data_path = Path("ml/data/training_data.json")
+    out_path = Path("ml/artifacts/gradient_boost_model.pkl")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not data_path.exists():
+        raise FileNotFoundError(f"Training dataset not found: {data_path}")
+
+    pipeline = XGBoostTrainingPipeline(random_state=42, estimator="auto", calibrate_method="isotonic")
+    examples = pipeline.load_training_examples(str(data_path))
+    texts = [e.text for e in examples]
+    labels = np.array([e.label for e in examples], dtype=np.int64)
+
+    X = pipeline.extract_features(texts, show_progress=True)
+    X_train, X_tmp, y_train, y_tmp = pipeline.split_data(X, labels, test_size=0.3)
+    X_val, X_test, y_val, y_test = pipeline.split_data(X_tmp, y_tmp, test_size=0.5)
+
+    pipeline.train_xgboost(X_train, y_train, X_val, y_val, calibrate=True)
+    metrics = pipeline.evaluate(X_test, y_test, threshold=0.5, use_calibrated=True)
+    pipeline.save_model(str(out_path))
+
+    print("Training complete")
+    print(f"  Accuracy:  {metrics.accuracy:.4f}")
+    print(f"  Precision: {metrics.precision:.4f}")
+    print(f"  Recall:    {metrics.recall:.4f}")
+    print(f"  F1:        {metrics.f1_score:.4f}")
+    print(f"  Brier:     {metrics.brier_score:.4f}")
+    print(f"  AUC:       {metrics.roc_auc:.4f}")
+    print(f"Saved model: {out_path}")
 
 
 if __name__ == "__main__":

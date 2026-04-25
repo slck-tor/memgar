@@ -30,6 +30,11 @@ from enum import Enum
 from collections import defaultdict
 import time
 
+try:
+    from ml.thresholds import ThresholdManager
+except Exception:  # pragma: no cover
+    ThresholdManager = None  # type: ignore
+
 
 class ThreatLevel(str, Enum):
     """Threat severity classification"""
@@ -150,12 +155,16 @@ class MLThreatDetection:
 
 @dataclass
 class DetectionResult:
-    """Result from MLSemanticDetector.detect()"""
-    attack_probability: float   # 0.0 – 1.0
+    """Result from MLSemanticDetector.detect()."""
+    attack_probability: float
     should_block: bool
     threat_level: "ThreatLevel"
     explanation: str = ""
     latency_ms: float = 0.0
+    threshold_used: float = 0.5
+    profile_used: str = "balanced"
+    tenant_id: Optional[str] = None
+    calibrated: bool = False
 
 
 class MLSemanticDetector:
@@ -169,11 +178,20 @@ class MLSemanticDetector:
         model_path: Optional path to a pickled sklearn model.  When provided,
                     the model is used for scoring instead of the hand-crafted
                     weights.  Raises FileNotFoundError if the file is missing.
+        threshold_manager: Optional external threshold manager.
+        default_profile: Decision profile used when no tenant/profile override is set.
+        threshold_config_path: Optional JSON config path for threshold profiles.
     """
 
-    BLOCK_THRESHOLD = 0.5  # attack_probability >= this value → should_block=True
+    BLOCK_THRESHOLD = 0.5  # attack_probability >= this value => should_block=True
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        threshold_manager: Optional["ThresholdManager"] = None,
+        default_profile: str = "balanced",
+        threshold_config_path: Optional[str] = None,
+    ):
         # Intent lexicons (semantic keyword groups)
         self._init_intent_lexicons()
 
@@ -203,6 +221,15 @@ class MLSemanticDetector:
                 self._feature_extractor = MLFeatureExtractor()
             except ImportError:
                 pass
+
+        # Dynamic thresholding (optional)
+        self.default_profile = default_profile
+        if threshold_manager is not None:
+            self.threshold_manager = threshold_manager
+        elif ThresholdManager is not None:
+            self.threshold_manager = ThresholdManager(config_path=threshold_config_path)
+        else:
+            self.threshold_manager = None
 
         # Performance tracking
         self.inference_times: List[float] = []
@@ -321,8 +348,8 @@ class MLSemanticDetector:
         
         # Unicode homoglyphs (lookalike characters)
         self.homoglyphs = {
-            'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c',  # Cyrillic
-            'і': 'i', 'ј': 'j', 'ѕ': 's', 'х': 'x', 'у': 'y'
+            '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p', '\u0441': 'c',  # Cyrillic
+            '\u0456': 'i', '\u0458': 'j', '\u0455': 's', '\u0445': 'x', '\u0443': 'y'
         }
         
         # Compile patterns
@@ -585,8 +612,42 @@ class MLSemanticDetector:
         indicators = self.technical_indicators[indicator_type]
         matches = sum(1 for indicator in indicators if indicator in content)
         return min(1.0, matches / max(1, len(indicators) * 0.3))
-    
-    def detect(self, content: str) -> DetectionResult:
+
+    def _resolve_policy(
+        self,
+        tenant_id: Optional[str],
+        risk_profile: Optional[str],
+        threshold_override: Optional[float],
+    ) -> Tuple[float, str, Dict[str, float]]:
+        """Resolve threshold + level boundaries from profile and tenant settings."""
+        if self.threshold_manager is not None:
+            threshold, profile = self.threshold_manager.resolve(
+                tenant_id=tenant_id,
+                profile_name=risk_profile,
+                threshold_override=threshold_override,
+                fallback_profile=self.default_profile,
+            )
+            return threshold, profile.name, {
+                "suspicious": profile.suspicious_threshold,
+                "malicious": profile.malicious_threshold,
+                "critical": profile.critical_threshold,
+            }
+
+        threshold = self.BLOCK_THRESHOLD if threshold_override is None else float(threshold_override)
+        threshold = max(0.0, min(1.0, threshold))
+        return threshold, (risk_profile or self.default_profile), {
+            "suspicious": 0.30,
+            "malicious": 0.50,
+            "critical": 0.75,
+        }
+
+    def detect(
+        self,
+        content: str,
+        tenant_id: Optional[str] = None,
+        risk_profile: Optional[str] = None,
+        threshold_override: Optional[float] = None,
+    ) -> DetectionResult:
         """
         Primary detection interface. Returns a DetectionResult.
 
@@ -609,12 +670,17 @@ class MLSemanticDetector:
         latency_ms = (time.time() - start) * 1000
         self.inference_times.append(latency_ms)
 
-        should_block = prob >= self.BLOCK_THRESHOLD
-        if prob >= 0.75:
+        block_threshold, profile_used, levels = self._resolve_policy(
+            tenant_id=tenant_id,
+            risk_profile=risk_profile,
+            threshold_override=threshold_override,
+        )
+        should_block = prob >= block_threshold
+        if prob >= levels["critical"]:
             level = ThreatLevel.CRITICAL
-        elif prob >= 0.50:
+        elif prob >= levels["malicious"]:
             level = ThreatLevel.MALICIOUS
-        elif prob >= 0.30:
+        elif prob >= levels["suspicious"]:
             level = ThreatLevel.SUSPICIOUS
         else:
             level = ThreatLevel.BENIGN
@@ -623,8 +689,12 @@ class MLSemanticDetector:
             attack_probability=prob,
             should_block=should_block,
             threat_level=level,
-            explanation=f"Threat level: {level.value} (p={prob:.3f})",
+            explanation=f"Threat level: {level.value} (p={prob:.3f}, threshold={block_threshold:.3f})",
             latency_ms=latency_ms,
+            threshold_used=block_threshold,
+            profile_used=profile_used,
+            tenant_id=tenant_id,
+            calibrated=(self._sklearn_model is not None),
         )
 
     def classify(self, content: str) -> MLThreatDetection:
@@ -873,3 +943,4 @@ def test_ml_detector():
 
 if __name__ == "__main__":
     test_ml_detector()
+
