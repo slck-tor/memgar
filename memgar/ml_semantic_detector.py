@@ -667,6 +667,9 @@ class MLSemanticDetector:
             features = self.extract_features(content)
             prob = self._calculate_threat_score(features)
 
+        # Guardrail boost for explicit directive-style prompt injection markers.
+        prob = self._apply_directive_marker_boost(content, prob)
+
         latency_ms = (time.time() - start) * 1000
         self.inference_times.append(latency_ms)
 
@@ -696,6 +699,36 @@ class MLSemanticDetector:
             tenant_id=tenant_id,
             calibrated=(self._sklearn_model is not None),
         )
+
+    def _apply_directive_marker_boost(self, content: str, probability: float) -> float:
+        """
+        Boost probability for explicit system/admin directive injection formats.
+
+        This is intentionally narrow: it only applies to high-signal markers such
+        as `SYSTEM:` / `[SYSTEM ...]` / `<<< ADMIN MODE >>>` patterns.
+        """
+        text = content.lower()
+
+        directive_markers = [
+            r"\bsystem\s*:",
+            r"\[\s*system(?:\s+[^\]]+)?\]",
+            r"---\s*end\s+system\s+prompt\s*---",
+            r"<<<\s*admin\s+mode\s*>>>",
+            r"\b(system\s+override|admin\s+mode|debug\s+mode)\b",
+        ]
+        marker_hits = sum(1 for pattern in directive_markers if re.search(pattern, text))
+
+        action_patterns = [
+            r"\b(ignore|disregard|bypass|disable|override|execute|enter|reveal|export|dump)\b",
+            r"\bdo\s+what\s+i\s+say\b",
+        ]
+        has_action_signal = any(re.search(pattern, text) for pattern in action_patterns)
+
+        if marker_hits >= 1 and has_action_signal:
+            return max(probability, 0.82)
+        if marker_hits >= 2:
+            return max(probability, 0.75)
+        return probability
 
     def classify(self, content: str) -> MLThreatDetection:
         """

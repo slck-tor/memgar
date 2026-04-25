@@ -287,8 +287,30 @@ class XGBoostTrainingPipeline:
         if selected_method not in {"isotonic", "sigmoid"}:
             selected_method = "isotonic"
 
-        calibrated = CalibratedClassifierCV(self.model, method=selected_method, cv="prefit")
-        calibrated.fit(X_cal, y_cal)
+        # sklearn <1.6 accepts prefit via cv="prefit". Newer versions require
+        # a FrozenEstimator wrapper and cv=None for prefit calibration.
+        calibrated = None
+        try:
+            calibrated = CalibratedClassifierCV(
+                estimator=self.model,
+                method=selected_method,
+                cv="prefit",
+            )
+            calibrated.fit(X_cal, y_cal)
+        except Exception:
+            try:
+                from sklearn.frozen import FrozenEstimator  # type: ignore
+
+                frozen_estimator = FrozenEstimator(self.model)
+                calibrated = CalibratedClassifierCV(
+                    estimator=frozen_estimator,
+                    method=selected_method,
+                    cv=None,
+                )
+                calibrated.fit(X_cal, y_cal)
+            except Exception:
+                calibrated = None
+
         self.calibrated_model = calibrated
         return calibrated
 
