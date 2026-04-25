@@ -44,6 +44,7 @@ from collections import defaultdict
 import numpy as np
 
 from ml.training.hard_negative_miner import HardNegativeMiner, merge_training_examples
+from ml.thresholds import ThresholdManager
 
 try:
     from memgar.learning import PatternEvolutionEngine
@@ -122,6 +123,9 @@ class DriftReport:
     baseline_fp_rate: float
     current_fp_rate: float
     fp_increase: float
+    baseline_fn_rate: float
+    current_fn_rate: float
+    fn_increase: float
     
     # Recommendations
     recommendation: str
@@ -475,6 +479,9 @@ class DriftDetector:
             baseline_fp_rate=baseline.false_positive_rate,
             current_fp_rate=current.false_positive_rate,
             fp_increase=fp_increase,
+            baseline_fn_rate=baseline.false_negative_rate,
+            current_fn_rate=current.false_negative_rate,
+            fn_increase=fn_increase,
             recommendation=recommendation,
             should_retrain=should_retrain,
             details={
@@ -719,6 +726,11 @@ class ContinuousLearning:
         drift_threshold: float = 0.03,
         retrain_threshold: int = 100,
         version_history_size: int = 10,
+        threshold_config_path: Optional[str] = None,
+        threshold_profile: str = "balanced",
+        enable_auto_threshold_tuning: bool = True,
+        auto_threshold_min_block: float = 0.20,
+        auto_threshold_max_block: float = 0.90,
     ):
         # If caller provides model_path/feedback_dir, derive storage_path from them
         if feedback_dir is not None:
@@ -739,6 +751,16 @@ class ContinuousLearning:
         self.retrain_threshold = retrain_threshold
         self.version_history_size = version_history_size
         self.drift_detector.accuracy_threshold = drift_threshold
+
+        # Dynamic threshold policy tuning
+        self.threshold_profile = str(threshold_profile or "balanced")
+        self.enable_auto_threshold_tuning = bool(enable_auto_threshold_tuning)
+        self.auto_threshold_min_block = float(auto_threshold_min_block)
+        self.auto_threshold_max_block = float(auto_threshold_max_block)
+        if threshold_config_path is None:
+            threshold_config_path = str(self.storage.base_path / "threshold_profiles.json")
+        self.threshold_config_path = threshold_config_path
+        self.threshold_manager = ThresholdManager(config_path=self.threshold_config_path)
 
         # Simple in-memory feedback store (lightweight, no full prediction pipeline)
         self._feedback: List[Dict] = []
@@ -859,6 +881,10 @@ class ContinuousLearning:
             and pattern_drift.get('drift_detected')
             and float(pattern_drift.get('drift_score', 0.0)) >= 0.25
         )
+        threshold_policy = self._auto_adjust_threshold_policy(
+            drift_report=drift_report,
+            pattern_drift=pattern_drift,
+        )
 
         # 5. Retrain if needed
         if drift_report.should_retrain or pattern_retrain_signal:
@@ -893,12 +919,14 @@ class ContinuousLearning:
             return {
                 'drift': asdict(drift_report),
                 'pattern_drift': pattern_drift,
+                'threshold_policy': threshold_policy,
                 'retrain': retrain_result
             }
         
         return {
             'drift': asdict(drift_report),
             'pattern_drift': pattern_drift,
+            'threshold_policy': threshold_policy,
             'retrain': None
         }
 
@@ -940,6 +968,128 @@ class ContinuousLearning:
         except Exception as exc:
             self.logger.warning(f"Pattern drift analysis failed: {exc}")
             return None
+
+    def _derive_threshold_delta(
+        self,
+        drift_report: DriftReport,
+        pattern_drift: Optional[Dict[str, Any]],
+    ) -> Tuple[float, List[str]]:
+        """
+        Convert drift signals to a conservative threshold shift.
+
+        Negative delta => stricter blocking.
+        Positive delta => more lenient blocking.
+        """
+        reasons: List[str] = []
+        delta = 0.0
+
+        fn_increase = max(0.0, float(drift_report.fn_increase))
+        fp_increase = max(0.0, float(drift_report.fp_increase))
+        pattern_detected = bool(pattern_drift and pattern_drift.get("drift_detected"))
+        pattern_score = float(pattern_drift.get("drift_score", 0.0)) if pattern_drift else 0.0
+
+        # Security-first: missed attacks (FN) or evolving adversarial language => tighten.
+        if fn_increase > self.drift_detector.fn_threshold:
+            delta -= 0.06
+            reasons.append(f"fn_increase={fn_increase:.4f}>fn_threshold")
+        elif fn_increase > 0.0:
+            delta -= 0.02
+            reasons.append(f"fn_increase={fn_increase:.4f}")
+
+        if pattern_detected:
+            if pattern_score >= 0.45:
+                delta -= 0.06
+            elif pattern_score >= 0.25:
+                delta -= 0.04
+            else:
+                delta -= 0.02
+            reasons.append(f"pattern_drift={pattern_score:.4f}")
+
+        # If only false positives are rising, relax slightly.
+        if (
+            fp_increase > self.drift_detector.fp_threshold
+            and fn_increase <= self.drift_detector.fn_threshold
+            and not pattern_detected
+        ):
+            delta += 0.04
+            reasons.append(f"fp_increase={fp_increase:.4f}>fp_threshold")
+
+        if drift_report.severity == "high" and delta < 0.0:
+            delta *= 1.20
+        elif drift_report.severity == "medium" and delta < 0.0:
+            delta *= 1.10
+
+        return delta, reasons
+
+    def _auto_adjust_threshold_policy(
+        self,
+        drift_report: DriftReport,
+        pattern_drift: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Adjust threshold profile automatically and persist config."""
+        if not self.enable_auto_threshold_tuning:
+            return {
+                "enabled": False,
+                "updated": False,
+                "profile": self.threshold_profile,
+                "reason": "disabled",
+            }
+
+        profile_name = self.threshold_profile or "balanced"
+        try:
+            before = self.threshold_manager.get_profile(profile_name)
+            delta, reasons = self._derive_threshold_delta(drift_report, pattern_drift)
+
+            if abs(delta) < 1e-12:
+                return {
+                    "enabled": True,
+                    "updated": False,
+                    "profile": before.name,
+                    "old_block_threshold": before.block_threshold,
+                    "new_block_threshold": before.block_threshold,
+                    "delta": 0.0,
+                    "reasons": reasons,
+                    "config_path": self.threshold_config_path,
+                }
+
+            updated = self.threshold_manager.adjust_profile(
+                profile_name=before.name,
+                block_delta=delta,
+                fallback_profile=profile_name,
+                min_block=self.auto_threshold_min_block,
+                max_block=self.auto_threshold_max_block,
+            )
+            saved_path = self.threshold_manager.save(self.threshold_config_path)
+            action = "tighten" if updated.block_threshold < before.block_threshold else "relax"
+            applied_delta = updated.block_threshold - before.block_threshold
+
+            self.logger.info(
+                "Threshold policy update (%s): %.3f -> %.3f",
+                action,
+                before.block_threshold,
+                updated.block_threshold,
+            )
+
+            return {
+                "enabled": True,
+                "updated": True,
+                "action": action,
+                "profile": updated.name,
+                "old_block_threshold": before.block_threshold,
+                "new_block_threshold": updated.block_threshold,
+                "delta": applied_delta,
+                "reasons": reasons,
+                "config_path": saved_path or self.threshold_config_path,
+            }
+        except Exception as exc:
+            self.logger.warning(f"Threshold policy update failed: {exc}")
+            return {
+                "enabled": True,
+                "updated": False,
+                "profile": profile_name,
+                "reason": "error",
+                "error": str(exc),
+            }
     
     # -------------------------------------------------------------------------
     # Simplified test-friendly API
@@ -1013,6 +1163,8 @@ class ContinuousLearning:
             'baseline_accuracy': self.baseline_metrics.accuracy,
             'storage_path': str(self.storage.base_path),
             'active_feedback_file': str(self._active_feedback_file),
+            'threshold_profile': self.threshold_profile,
+            'threshold_config_path': str(self.threshold_config_path),
         }
 
 
@@ -1039,19 +1191,11 @@ class SmartDetector:
         model_path: str,
         enable_learning: bool = True,
         feedback_dir: Optional[str] = None,
+        threshold_config_path: Optional[str] = None,
+        threshold_profile: str = "balanced",
     ):
         self.model_path = model_path
         self.enable_learning = enable_learning
-
-        # Lazy-load ML detector to avoid hard import failures
-        self._detector = None
-        try:
-            from memgar.ml_semantic_detector import MLSemanticDetector
-            import os
-            if os.path.exists(model_path):
-                self._detector = MLSemanticDetector(model_path)
-        except Exception:
-            pass
 
         # Feedback store (always available, even without a model)
         import tempfile, os
@@ -1062,7 +1206,29 @@ class SmartDetector:
             self._cl = ContinuousLearning(
                 model_path=model_path,
                 feedback_dir=_fdir,
+                threshold_config_path=threshold_config_path,
+                threshold_profile=threshold_profile,
             )
+
+        effective_threshold_config = (
+            self._cl.threshold_config_path
+            if self._cl is not None
+            else threshold_config_path
+        )
+
+        # Lazy-load ML detector to avoid hard import failures
+        self._detector = None
+        try:
+            from memgar.ml_semantic_detector import MLSemanticDetector
+            import os
+            if os.path.exists(model_path):
+                self._detector = MLSemanticDetector(
+                    model_path,
+                    threshold_config_path=effective_threshold_config,
+                    default_profile=threshold_profile,
+                )
+        except Exception:
+            pass
 
     def detect(self, text: str):
         """Run detection and return a result with .attack_probability and .should_block."""

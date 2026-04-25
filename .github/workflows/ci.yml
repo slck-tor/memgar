@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  ml-matrix-gate:
+    name: ML Gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.9", "3.11", "3.14"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" numpy scikit-learn
+
+      - name: Rebuild model artifact
+        run: python rebuild_model.py
+
+      - name: Mandatory ML tests
+        run: |
+          pytest -q \
+            tests/test_feature_extractor.py \
+            tests/test_ml_detector.py \
+            tests/test_ml_integration.py \
+            tests/test_ml_advanced_design.py \
+            tests/test_continuous_learning.py
+
+      - name: Release quality gate (fail-fast)
+        run: |
+          python -m ml.quality_gate \
+            --model-path ml/artifacts/gradient_boost_model.pkl \
+            --training-data-path ml/data/training_data.json \
+            --min-precision 0.94 \
+            --min-recall 0.94 \
+            --max-p95-latency-ms 25 \
+            --max-avg-latency-ms 10 \
+            --output-json ml/artifacts/quality_gate_report.json
+
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-gate-${{ matrix.python-version }}
+          path: ml/artifacts/quality_gate_report.json
+
+  core-tests:
+    name: Core test suite (Python 3.11)
+    runs-on: ubuntu-latest
+    needs: ml-matrix-gate
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]" numpy scikit-learn
+
+      - name: Rebuild model artifact
+        run: python rebuild_model.py
+
+      - name: Run full test suite
+        run: pytest -q

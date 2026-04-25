@@ -73,3 +73,71 @@ def test_merge_training_examples_ratio_cap():
     merged = merge_training_examples(base, hns, max_added_negative_ratio=0.3)
     # max 3 added to base-10 set
     assert len(merged) == 13
+
+
+def test_auto_threshold_policy_tightens_on_fn_and_pattern_drift(tmp_path):
+    from ml.continuous_learning import ContinuousLearning, DriftReport
+
+    cl = ContinuousLearning(
+        feedback_dir=str(tmp_path / "feedback"),
+        threshold_config_path=str(tmp_path / "thresholds.json"),
+        threshold_profile="balanced",
+    )
+    drift = DriftReport(
+        timestamp=0.0,
+        drift_detected=True,
+        severity="high",
+        baseline_accuracy=0.95,
+        current_accuracy=0.88,
+        accuracy_drop=0.07,
+        baseline_fp_rate=0.01,
+        current_fp_rate=0.02,
+        fp_increase=0.01,
+        baseline_fn_rate=0.01,
+        current_fn_rate=0.07,
+        fn_increase=0.06,
+        recommendation="URGENT: Retrain immediately",
+        should_retrain=True,
+    )
+
+    result = cl._auto_adjust_threshold_policy(
+        drift_report=drift,
+        pattern_drift={"drift_detected": True, "drift_score": 0.5},
+    )
+    assert result is not None
+    assert result["updated"] is True
+    assert result["action"] == "tighten"
+    assert result["new_block_threshold"] < result["old_block_threshold"]
+    assert Path(result["config_path"]).exists()
+
+
+def test_auto_threshold_policy_relaxes_on_fp_drift(tmp_path):
+    from ml.continuous_learning import ContinuousLearning, DriftReport
+
+    cl = ContinuousLearning(
+        feedback_dir=str(tmp_path / "feedback"),
+        threshold_config_path=str(tmp_path / "thresholds.json"),
+        threshold_profile="balanced",
+    )
+    drift = DriftReport(
+        timestamp=0.0,
+        drift_detected=True,
+        severity="low",
+        baseline_accuracy=0.95,
+        current_accuracy=0.94,
+        accuracy_drop=0.01,
+        baseline_fp_rate=0.01,
+        current_fp_rate=0.06,
+        fp_increase=0.05,
+        baseline_fn_rate=0.01,
+        current_fn_rate=0.01,
+        fn_increase=0.0,
+        recommendation="Monitor closely",
+        should_retrain=False,
+    )
+
+    result = cl._auto_adjust_threshold_policy(drift_report=drift, pattern_drift=None)
+    assert result is not None
+    assert result["updated"] is True
+    assert result["action"] == "relax"
+    assert result["new_block_threshold"] > result["old_block_threshold"]
