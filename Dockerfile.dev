@@ -1,0 +1,14 @@
+# Development image — editable install with test dependencies
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir --upgrade pip
+
+COPY pyproject.toml ./
+
+# Install with dev + ML extras
+RUN pip install --no-cache-dir -e ".[dev]" numpy scikit-learn
+
+# Source is mounted as a volume at runtime (docker compose)
+CMD ["bash"]

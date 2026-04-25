@@ -1,0 +1,60 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Memgar Docker Compose
+#
+# Usage:
+#   docker compose run --rm memgar analyze "your content here"
+#   docker compose run --rm memgar scan /data/memories.json
+#   docker compose run --rm memgar --help
+#
+# For batch scans with local files:
+#   docker compose run --rm -v $(pwd)/my_data:/data memgar scan /data
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Core memgar CLI ────────────────────────────────────────────────────────
+  memgar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: memgar:latest
+    volumes:
+      # Mount local data directory for scanning local files
+      - ./data:/data:ro
+      # Mount config file if you have one
+      - ./memgar.yaml:/app/memgar.yaml:ro
+    environment:
+      - MEMGAR_LOG_LEVEL=${MEMGAR_LOG_LEVEL:-WARNING}
+      # Optional LLM keys for semantic analysis
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    # No ports: CLI-only service, invoked with `docker compose run`
+
+  # ── Development environment (includes test deps + editable install) ────────
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+      - MEMGAR_LOG_LEVEL=DEBUG
+    command: bash
+    profiles: [dev]
+
+  # ── Run tests inside container ─────────────────────────────────────────────
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      bash -c "python scripts/build_model.py &&
+               pytest --tb=short -q"
+    profiles: [test]
