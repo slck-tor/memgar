@@ -37,6 +37,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass, field
+import sys
 from enum import Enum
 from typing import (
     Dict,
@@ -59,7 +60,14 @@ import time
 # DATA STRUCTURES
 # =============================================================================
 
-@dataclass(frozen=True, slots=True)
+_match_dataclass = (
+    dataclass(frozen=True, slots=True)
+    if sys.version_info >= (3, 10)
+    else dataclass(frozen=True)
+)
+
+
+@_match_dataclass
 class Match:
     """Immutable match result."""
     pattern: str
