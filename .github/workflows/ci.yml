@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "claude/**", "feature/**", "fix/**"]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. LINT — fast, runs first so PRs get feedback quickly
+  # ─────────────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install "ruff>=0.4"
+
+      - name: Check for syntax errors (blocking)
+        # Only E9xx (syntax/runtime errors) will fail the build.
+        # All other violations are reported as annotations but don't block CI.
+        # TODO: tighten this as the codebase is cleaned up.
+        run: |
+          ruff check memgar/ \
+            --select E9 \
+            --output-format=github
+
+      - name: Full lint report (advisory)
+        run: |
+          ruff check memgar/ \
+            --select E,F,W,I \
+            --ignore E501,E402 \
+            --output-format=github \
+            --exit-zero
+        # --exit-zero: always exits 0 so CI is not blocked, but
+        # violations are shown as GitHub annotations on the PR.
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. TEST — matrix across Python versions
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: lint
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install numpy scikit-learn
+
+      - name: Build ML model
+        run: python scripts/build_model.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Run tests
+        run: |
+          pytest \
+            --cov=memgar \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --tb=short \
+            -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. SECURITY SCAN — weekly + on push to main
+  # ─────────────────────────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install bandit
+        run: pip install bandit[toml]
+
+      - name: Run bandit
+        run: |
+          bandit -r memgar/ \
+            -ll \
+            --exclude memgar/cli.py \
+            -f github
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 4. BUILD CHECK — verify the package builds cleanly
+  # ─────────────────────────────────────────────────────────────────────────
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build tools
+        run: pip install build hatchling twine
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Verify distributions
+        run: twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
