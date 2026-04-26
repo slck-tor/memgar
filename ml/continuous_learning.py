@@ -174,9 +174,23 @@ class StorageManager:
         """Save prediction to daily batch file"""
         date = datetime.fromtimestamp(prediction.timestamp).strftime("%Y%m%d")
         filepath = self.base_path / "predictions" / f"predictions_{date}.jsonl"
-        
+
         with open(filepath, 'a') as f:
             f.write(json.dumps(asdict(prediction)) + '\n')
+
+        # Auto-label extreme-confidence predictions so retrain() can use them
+        # without requiring manual feedback for every prediction.
+        # Thresholds are conservative to avoid reinforcing errors:
+        #   confidence >= 0.90  → very likely a real attack   (auto_labeled_high_confidence)
+        #   confidence == 0.0   → clearly safe content        (auto_labeled_safe)
+        if prediction.confidence >= 0.90 or prediction.confidence == 0.0:
+            prediction.actual_attack = prediction.predicted_attack
+            prediction.feedback = (
+                "auto_labeled_high_confidence"
+                if prediction.confidence >= 0.90
+                else "auto_labeled_safe"
+            )
+            self._save_feedback(prediction)
     
     def load_predictions(self, days: int = 7) -> List[Prediction]:
         """Load predictions from last N days"""
