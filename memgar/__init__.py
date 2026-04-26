@@ -62,7 +62,7 @@ from memgar.models import (
 from memgar.analyzer import Analyzer, QuickAnalyzer
 from memgar.scanner import Scanner
 from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id, pattern_stats
-from memgar.config import MemgarConfig
+from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -709,6 +709,27 @@ def get_version() -> str:
 
 def check_installation() -> dict:
     """Check what features are available."""
+    # Layer 3: trust scoring wired into Analyzer._doc_trust_scores
+    try:
+        from memgar.analyzer import Analyzer as _A
+        _layer3_ok = hasattr(_A, "register_source_trust")
+    except Exception:
+        _layer3_ok = False
+
+    # Layer 4: behavioral baseline wired into Analyzer._baselines
+    try:
+        from memgar.behavioral_baseline import BehavioralBaseline as _BL  # noqa: F401
+        _layer4_ok = True
+    except Exception:
+        _layer4_ok = False
+
+    # Adversarial red-team module
+    try:
+        from ml.adversarial import AttackGenerator as _AG  # noqa: F401
+        _adversarial_ok = True
+    except Exception:
+        _adversarial_ok = False
+
     return {
         "version": __version__,
         "core": True,
@@ -719,8 +740,12 @@ def check_installation() -> dict:
         "agents": True,
         "layer2_sanitization": True,
         "layer2_provenance": True,
-        "layer3_retrieval": True,
-        "layer4_monitoring": True,
+        "layer3_retrieval": _layer3_ok,
+        "layer4_monitoring": _layer4_ok,
+        "async_analyze": True,
+        "feed": FEED_AVAILABLE,
+        "observability": OBSERVABILITY_AVAILABLE,
+        "adversarial": _adversarial_ok,
     }
 
 
@@ -950,4 +975,14 @@ __all__ = [
     # Observability (optional)
     "OBSERVABILITY_AVAILABLE",
     "start_metrics_server",
+
+    # Config dataclasses
+    "FeedConfig",
+    "ObservabilityConfig",
+
+    # Layer 3+4 components (now wired into Analyzer)
+    "BehavioralBaseline",
+    "DeviationLevel",
+    "DeviationReport",
+    "BaselineIntegration",
 ]
