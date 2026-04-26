@@ -49,6 +49,9 @@ class FeedCache:
         except Exception:
             return True
 
+    _MAX_COMPRESSED = 20 * 1024 * 1024   # 20 MB
+    _MAX_DECOMPRESSED = 100 * 1024 * 1024  # 100 MB
+
     def get_cached_bundle(self, max_age_days: int = 7) -> Optional["PatternBundle"]:  # type: ignore[name-defined]
         if self.is_stale(max_age_days):
             return None
@@ -56,7 +59,14 @@ class FeedCache:
         if not bp.exists():
             return None
         try:
-            raw = gzip.decompress(bp.read_bytes())
+            compressed = bp.read_bytes()
+            if len(compressed) > self._MAX_COMPRESSED:
+                logger.warning("Cached feed exceeds size limit — discarding")
+                return None
+            raw = gzip.decompress(compressed)
+            if len(raw) > self._MAX_DECOMPRESSED:
+                logger.warning("Decompressed feed exceeds size limit — discarding")
+                return None
             data = json.loads(raw.decode("utf-8"))
             return _bundle_from_dict(data)
         except Exception as exc:
@@ -98,7 +108,32 @@ class FeedCache:
 def _bundle_from_dict(data: dict) -> "PatternBundle":  # type: ignore[name-defined]
     from memgar.feed.models import FeedManifest, PatternBundle
     manifest = FeedManifest.from_dict(data.get("manifest", {}))
-    return PatternBundle(manifest=manifest, patterns=data.get("patterns", []))
+    bundle = PatternBundle(manifest=manifest, patterns=data.get("patterns", []))
+    # Verify this feed is compatible with the running memgar version.
+    _check_version_compat(manifest.min_memgar_version)
+    return bundle
+
+
+def _check_version_compat(min_version_str: str) -> None:
+    """Log a warning (non-fatal) when the feed requires a newer memgar."""
+    if not min_version_str:
+        return
+    try:
+        from memgar import __version__
+
+        def _parse(v: str):
+            parts = v.strip().lstrip("v").split(".")
+            return tuple(int(x) for x in parts[:3])
+
+        running = _parse(__version__)
+        required = _parse(min_version_str)
+        if running < required:
+            logger.warning(
+                "Feed requires memgar >= %s but running %s — some patterns may not load correctly.",
+                min_version_str, __version__,
+            )
+    except Exception:
+        pass
 
 
 # Late import to satisfy type checkers

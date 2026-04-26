@@ -37,14 +37,39 @@ def _load_patterns_fast() -> list:
     """Load patterns from pickle cache (3ms) or full import (3500ms), then merge feed patterns."""
     import os, pickle, hashlib
     from pathlib import Path
+
+    class _RestrictedUnpickler(pickle.Unpickler):
+        """Only allow the built-in types and our own model classes."""
+        _ALLOWED = {
+            ("builtins", "dict"), ("builtins", "list"), ("builtins", "tuple"),
+            ("builtins", "str"), ("builtins", "int"), ("builtins", "float"),
+            ("builtins", "bool"), ("builtins", "NoneType"),
+            ("memgar.models", "Threat"), ("memgar.models", "ThreatCategory"),
+            ("memgar.models", "Severity"),
+        }
+        def find_class(self, module: str, name: str):
+            if (module, name) not in self._ALLOWED:
+                raise pickle.UnpicklingError(f"Forbidden: {module}.{name}")
+            return super().find_class(module, name)
+
     patterns: list = []
     try:
         cache_dir = os.environ.get("MEMGAR_CACHE_DIR", "").strip()
-        base = Path(cache_dir) if cache_dir else Path(os.path.expanduser("~")) / ".cache" / "memgar"
+        if cache_dir:
+            # Resolve path and ensure it stays within the home directory
+            resolved = Path(cache_dir).resolve()
+            home = Path.home().resolve()
+            try:
+                resolved.relative_to(home)
+                base = resolved
+            except ValueError:
+                base = home / ".cache" / "memgar"
+        else:
+            base = Path(os.path.expanduser("~")) / ".cache" / "memgar"
         cache_file = base / "patterns_v1.pkl"
         if cache_file.exists():
             with open(cache_file, "rb") as f:
-                payload = pickle.load(f)
+                payload = _RestrictedUnpickler(f).load()
             patterns_path = Path(__file__).parent / "patterns.py"
             file_hash = hashlib.sha256(patterns_path.read_bytes()).hexdigest()[:16]
             if payload.get("hash") == file_hash:

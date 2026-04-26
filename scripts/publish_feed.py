@@ -107,8 +107,10 @@ def _sign_bundle(bundle_bytes: bytes, private_key_path: Path) -> tuple[str, str]
     with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tf:
         tf.write(bundle_bytes)
         tmp_in = tf.name
+    os.chmod(tmp_in, 0o600)  # owner-read only
     with tempfile.NamedTemporaryFile(delete=False, suffix=".sig") as sf:
         tmp_sig = sf.name
+    os.chmod(tmp_sig, 0o600)
 
     try:
         r = subprocess.run(
