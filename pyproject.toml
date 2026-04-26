@@ -80,8 +80,17 @@ agents = [
 rag = [
     "memgar[langchain,llamaindex]",
 ]
+adversarial = [
+    "anthropic>=0.18.0",
+]
+feed = [
+    "cryptography>=41.0.0",
+]
+observability = [
+    "prometheus_client>=0.17.0",
+]
 all = [
-    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch]",
+    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability]",
 ]
 
 [project.scripts]

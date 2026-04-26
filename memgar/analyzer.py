@@ -34,9 +34,10 @@ from memgar.models import (
 from memgar.patterns import get_patterns_by_severity  # small helpers only
 
 def _load_patterns_fast() -> list:
-    """Load patterns from pickle cache (3ms) or full import (3500ms)."""
+    """Load patterns from pickle cache (3ms) or full import (3500ms), then merge feed patterns."""
     import os, pickle, hashlib
     from pathlib import Path
+    patterns: list = []
     try:
         cache_dir = os.environ.get("MEMGAR_CACHE_DIR", "").strip()
         base = Path(cache_dir) if cache_dir else Path(os.path.expanduser("~")) / ".cache" / "memgar"
@@ -47,12 +48,36 @@ def _load_patterns_fast() -> list:
             patterns_path = Path(__file__).parent / "patterns.py"
             file_hash = hashlib.sha256(patterns_path.read_bytes()).hexdigest()[:16]
             if payload.get("hash") == file_hash:
-                return payload["patterns"]
+                patterns = payload["patterns"]
     except Exception:
         pass
-    # Cache miss — full import
-    from memgar.patterns import PATTERNS
-    return list(PATTERNS)
+    if not patterns:
+        # Cache miss — full import
+        from memgar.patterns import PATTERNS
+        patterns = list(PATTERNS)
+
+    # Merge feed patterns (non-fatal: any feed error silently skips)
+    try:
+        from memgar.config import get_config
+        cfg = get_config()
+        feed_cfg = getattr(cfg, "feed", None)
+        if feed_cfg and getattr(feed_cfg, "enabled", False):
+            from memgar.feed.loader import FeedLoader
+            loader = FeedLoader(
+                github_repo=getattr(feed_cfg, "github_repo", "slcxtor/memgar"),
+                verify_signature=getattr(feed_cfg, "verify_signature", True),
+                max_age_days=getattr(feed_cfg, "max_age_days", 7),
+            )
+            bundle = loader.load(auto_sync=getattr(feed_cfg, "auto_sync", True))
+            if bundle:
+                existing_ids = {t.id for t in patterns}
+                for threat in bundle.to_threat_objects():
+                    if threat.id not in existing_ids:
+                        patterns.append(threat)
+    except Exception:
+        pass
+
+    return patterns
 
 
 # =============================================================================
@@ -949,16 +974,37 @@ class Analyzer:
     def analyze(self, entry: MemoryEntry) -> AnalysisResult:
         """
         Analyze a memory entry for threats.
-        
+
         Runs the content through all enabled analysis layers and
         returns a decision with detailed threat information.
-        
+
         Args:
             entry: The memory entry to analyze
-        
+
         Returns:
             AnalysisResult with decision, risk score, and detected threats
         """
+        result = self._analyze_internal(entry)
+        # Emit Prometheus metrics — non-fatal: metrics must never break analysis.
+        try:
+            from memgar.observability.metrics import (
+                ANALYSES_TOTAL, ANALYSIS_LATENCY, RISK_SCORE_HISTOGRAM
+            )
+            if ANALYSES_TOTAL is not None:
+                ANALYSES_TOTAL.labels(decision=result.decision.value).inc()
+            if ANALYSIS_LATENCY is not None:
+                ANALYSIS_LATENCY.observe(result.analysis_time_ms / 1000.0)
+            if RISK_SCORE_HISTOGRAM is not None:
+                RISK_SCORE_HISTOGRAM.observe(result.risk_score)
+            from memgar.observability import _drift_monitor
+            if _drift_monitor is not None:
+                _drift_monitor.record_score(result.risk_score)
+        except Exception:
+            pass
+        return result
+
+    def _analyze_internal(self, entry: MemoryEntry) -> AnalysisResult:
+        """Core analysis implementation (called by analyze())."""
         start_time = time.perf_counter()
         
         content = entry.content

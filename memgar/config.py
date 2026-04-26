@@ -304,7 +304,7 @@ class IgnoreConfig:
 @dataclass
 class CloudConfig:
     """Cloud service configuration."""
-    
+
     enabled: bool = False
     api_key: Optional[str] = None
     api_url: str = "https://api.memgar.io"
@@ -312,26 +312,49 @@ class CloudConfig:
 
 
 @dataclass
+class FeedConfig:
+    """Threat intelligence feed configuration."""
+
+    enabled: bool = False
+    auto_sync: bool = True
+    max_age_days: int = 7
+    github_repo: str = "slcxtor/memgar"
+    verify_signature: bool = True
+
+
+@dataclass
+class ObservabilityConfig:
+    """Prometheus metrics and drift-alert configuration."""
+
+    enabled: bool = False
+    port: int = 9090
+    drift_alert_threshold: float = 0.2
+    drift_window_size: int = 1000
+
+
+@dataclass
 class MemgarConfig:
     """
     Complete Memgar configuration.
-    
+
     Combines all sub-configurations into a single object.
     """
-    
+
     # Sub-configurations
     llm: LLMConfig = field(default_factory=LLMConfig)
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     ignore: IgnoreConfig = field(default_factory=IgnoreConfig)
     cloud: CloudConfig = field(default_factory=CloudConfig)
-    
+    feed: FeedConfig = field(default_factory=FeedConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+
     # Logging
     log_level: str = "WARNING"
-    
+
     # Custom rules
     custom_rules_path: Optional[str] = None
-    
+
     # Version
     config_version: str = "2.0"
 
@@ -512,7 +535,21 @@ def _apply_env_overrides(config: MemgarConfig) -> MemgarConfig:
     # Logging
     if "MEMGAR_LOG_LEVEL" in os.environ:
         config.log_level = os.environ["MEMGAR_LOG_LEVEL"].upper()
-    
+
+    # Feed env overrides
+    if "MEMGAR_FEED_ENABLED" in os.environ:
+        config.feed.enabled = _parse_bool(os.environ["MEMGAR_FEED_ENABLED"])
+    if "MEMGAR_FEED_GITHUB_REPO" in os.environ:
+        config.feed.github_repo = os.environ["MEMGAR_FEED_GITHUB_REPO"]
+    if "MEMGAR_FEED_VERIFY_SIGNATURE" in os.environ:
+        config.feed.verify_signature = _parse_bool(os.environ["MEMGAR_FEED_VERIFY_SIGNATURE"])
+
+    # Observability env overrides
+    if "MEMGAR_OBSERVABILITY_ENABLED" in os.environ:
+        config.observability.enabled = _parse_bool(os.environ["MEMGAR_OBSERVABILITY_ENABLED"])
+    if "MEMGAR_OBSERVABILITY_PORT" in os.environ:
+        config.observability.port = _parse_int(os.environ["MEMGAR_OBSERVABILITY_PORT"], 9090)
+
     return config
 
 
@@ -586,6 +623,27 @@ def _dict_to_config(data: Dict[str, Any]) -> MemgarConfig:
             sync_enabled=cloud_data.get("sync_enabled", False),
         )
     
+    # Feed config
+    if "feed" in data:
+        fd = data["feed"]
+        config.feed = FeedConfig(
+            enabled=fd.get("enabled", False),
+            auto_sync=fd.get("auto_sync", True),
+            max_age_days=fd.get("max_age_days", 7),
+            github_repo=fd.get("github_repo", "slcxtor/memgar"),
+            verify_signature=fd.get("verify_signature", True),
+        )
+
+    # Observability config
+    if "observability" in data:
+        od = data["observability"]
+        config.observability = ObservabilityConfig(
+            enabled=od.get("enabled", False),
+            port=od.get("port", 9090),
+            drift_alert_threshold=od.get("drift_alert_threshold", 0.2),
+            drift_window_size=od.get("drift_window_size", 1000),
+        )
+
     # Top-level settings
     config.log_level = data.get("log_level", "WARNING")
     config.custom_rules_path = data.get("custom_rules_path")
