@@ -981,6 +981,8 @@ class Analyzer:
         self._doc_trust_scores: dict[str, float] = {}
         # Layer 4: per-agent behavioral baselines (lazily created on first observation)
         self._baselines: dict[str, Any] = {}
+        # Production feedback — set None so hasattr race in threaded analyze() is avoided
+        self._storage_manager: Any = None
     
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
@@ -1031,9 +1033,7 @@ class Analyzer:
         try:
             from memgar.behavioral_baseline import BehavioralBaseline, DeviationLevel
             agent_id = (entry.metadata or {}).get("agent_id", "default")
-            if agent_id not in self._baselines:
-                self._baselines[agent_id] = BehavioralBaseline(agent_id=agent_id)
-            bl = self._baselines[agent_id]
+            bl = self._baselines.setdefault(agent_id, BehavioralBaseline(agent_id=agent_id))
             bl.observe("scan_risk_score", float(result.risk_score))
             bl.observe("scan_block_rate", 1.0 if result.decision == Decision.BLOCK else 0.0)
             report = bl.check()
@@ -1070,7 +1070,7 @@ class Analyzer:
             import hashlib as _hashlib
             import time as _time
             from ml.continuous_learning import Prediction, StorageManager
-            if not hasattr(self, "_storage_manager"):
+            if self._storage_manager is None:
                 self._storage_manager = StorageManager()
             _hash = _hashlib.sha256(entry.content.encode()).hexdigest()[:32]
             self._storage_manager.save_prediction(Prediction(
