@@ -315,7 +315,7 @@ class CloudConfig:
 class FeedConfig:
     """Threat intelligence feed configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     auto_sync: bool = True
     max_age_days: int = 7
     github_repo: str = "slcxtor/memgar"
@@ -539,6 +539,10 @@ def _apply_env_overrides(config: MemgarConfig) -> MemgarConfig:
     # Feed env overrides
     if "MEMGAR_FEED_ENABLED" in os.environ:
         config.feed.enabled = _parse_bool(os.environ["MEMGAR_FEED_ENABLED"])
+    if "MEMGAR_FEED_AUTO_SYNC" in os.environ:
+        config.feed.auto_sync = _parse_bool(os.environ["MEMGAR_FEED_AUTO_SYNC"])
+    if "MEMGAR_FEED_MAX_AGE_DAYS" in os.environ:
+        config.feed.max_age_days = _parse_int(os.environ["MEMGAR_FEED_MAX_AGE_DAYS"], 7)
     if "MEMGAR_FEED_GITHUB_REPO" in os.environ:
         config.feed.github_repo = os.environ["MEMGAR_FEED_GITHUB_REPO"]
     if "MEMGAR_FEED_VERIFY_SIGNATURE" in os.environ:
@@ -549,6 +553,14 @@ def _apply_env_overrides(config: MemgarConfig) -> MemgarConfig:
         config.observability.enabled = _parse_bool(os.environ["MEMGAR_OBSERVABILITY_ENABLED"])
     if "MEMGAR_OBSERVABILITY_PORT" in os.environ:
         config.observability.port = _parse_int(os.environ["MEMGAR_OBSERVABILITY_PORT"], 9090)
+    if "MEMGAR_OBSERVABILITY_DRIFT_THRESHOLD" in os.environ:
+        config.observability.drift_alert_threshold = float(
+            os.environ["MEMGAR_OBSERVABILITY_DRIFT_THRESHOLD"]
+        )
+    if "MEMGAR_OBSERVABILITY_DRIFT_WINDOW" in os.environ:
+        config.observability.drift_window_size = _parse_int(
+            os.environ["MEMGAR_OBSERVABILITY_DRIFT_WINDOW"], 1000
+        )
 
     return config
 

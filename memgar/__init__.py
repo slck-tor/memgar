@@ -582,6 +582,21 @@ class Memgar:
         else:
             self.analyzer = Analyzer(use_llm=use_llm, api_key=api_key, strict_mode=strict_mode)
         self.scanner = Scanner(analyzer=self.analyzer)
+
+        # Auto-start observability if enabled in config.
+        if OBSERVABILITY_AVAILABLE and start_metrics_server is not None:
+            try:
+                from memgar.config import get_config
+                cfg = get_config()
+                obs = getattr(cfg, "observability", None)
+                if obs is not None and getattr(obs, "enabled", False):
+                    start_metrics_server(
+                        port=getattr(obs, "port", 9090),
+                        psi_threshold=getattr(obs, "drift_alert_threshold", 0.20),
+                        window_size=getattr(obs, "drift_window_size", 1000),
+                    )
+            except Exception:
+                pass  # observability must never prevent initialization
     
     def analyze(
         self, 

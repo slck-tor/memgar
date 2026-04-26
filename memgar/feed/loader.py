@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 _GITHUB_API = "https://api.github.com/repos/{repo}/releases/latest"
 _FEED_ASSET_NAME = "memgar-feed.json.gz"
+# Fallback: committed dist/ file served via raw.githubusercontent.com.
+# Used when no GitHub Release exists yet (e.g. early deployments, forks).
+_RAW_FALLBACK_URL = "https://raw.githubusercontent.com/{repo}/main/feeds/memgar-feed.json.gz"
 _TIMEOUT = 30
 
 
@@ -51,14 +54,14 @@ class FeedLoader:
 
     def sync(self) -> Optional[PatternBundle]:
         """Fetch the latest release, verify signature, cache, and return bundle."""
-        release = self._fetch_release_info()
-        if not release:
-            return None
+        release = self._fetch_release_info()  # None when no release or network failure
 
-        download_url = self._find_asset_url(release)
+        download_url = self._find_asset_url(release) if release else None
         if not download_url:
-            logger.warning("Feed asset '%s' not found in latest release", _FEED_ASSET_NAME)
-            return None
+            # No release asset — fall back to the committed dist/ file.
+            fallback = _RAW_FALLBACK_URL.format(repo=self._repo)
+            logger.info("No release asset found, trying fallback URL: %s", fallback)
+            download_url = fallback
 
         raw_bytes = self._download(download_url)
         bundle = self._parse(raw_bytes)

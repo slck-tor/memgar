@@ -179,6 +179,9 @@ site/
 # Keep directory structure
 !.gitkeep
 
+# feeds/ — signed threat-intelligence bundle (tracked, published via publish-feed.yml)
+# feeds/ is intentionally NOT ignored
+
 # Keep important configs
 !requirements.txt
 !setup.py

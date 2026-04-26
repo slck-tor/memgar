@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import sys
 from pathlib import Path
@@ -65,7 +66,7 @@ def main() -> int:
     # 2. Generate variants
     from ml.adversarial.attack_generator import AttackGenerator
 
-    api_key = None if args.offline else None  # reads ANTHROPIC_API_KEY from env
+    api_key = None if args.offline else os.environ.get("ANTHROPIC_API_KEY")
     generator = AttackGenerator(
         api_key=api_key,
         offline_fallback=True,
