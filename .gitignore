@@ -200,3 +200,6 @@ secrets.json
 # Generated ML artifacts: versioned model configs and training data snapshots
 ml/artifacts/*_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.pkl.config.json
 ml/data/training_data_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.json
+
+# Continuous learning runtime data (predictions, metrics, feedback, drift reports)
+ml/continuous_learning/storage/
