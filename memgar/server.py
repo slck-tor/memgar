@@ -192,7 +192,20 @@ def create_app(
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
         if request.url.path not in ("/health", "/ready"):
-            client_ip = request.client.host if request.client else "unknown"
+            # Honour X-Forwarded-For for proxied deployments (first trusted hop).
+            # Fall back to direct connection address and normalise IPv6.
+            forwarded_for = request.headers.get("X-Forwarded-For")
+            if forwarded_for:
+                raw_ip = forwarded_for.split(",")[0].strip()
+            elif request.client:
+                raw_ip = request.client.host
+            else:
+                raw_ip = "unknown"
+            try:
+                import ipaddress
+                client_ip = str(ipaddress.ip_address(raw_ip.strip("[]")))
+            except (ValueError, AttributeError):
+                client_ip = raw_ip
             if not _limiter.is_allowed(client_ip):
                 return JSONResponse(
                     status_code=429,

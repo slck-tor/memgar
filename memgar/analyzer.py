@@ -1092,7 +1092,7 @@ class Analyzer:
         event loop is never blocked by pattern matching or LLM calls.
         """
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.analyze, entry)
 
     def _analyze_internal(self, entry: MemoryEntry) -> AnalysisResult:

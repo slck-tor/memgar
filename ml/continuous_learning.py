@@ -178,18 +178,12 @@ class StorageManager:
         with open(filepath, 'a') as f:
             f.write(json.dumps(asdict(prediction)) + '\n')
 
-        # Auto-label extreme-confidence predictions so retrain() can use them
-        # without requiring manual feedback for every prediction.
-        # Thresholds are conservative to avoid reinforcing errors:
-        #   confidence >= 0.90  → very likely a real attack   (auto_labeled_high_confidence)
-        #   confidence == 0.0   → clearly safe content        (auto_labeled_safe)
-        if prediction.confidence >= 0.90 or prediction.confidence == 0.0:
+        # Auto-label only high-confidence predictions (>= 0.90) so retrain() can
+        # use them without requiring manual review. Confidence == 0.0 is NOT
+        # auto-labeled because it signals model uncertainty, not safe content.
+        if prediction.confidence >= 0.90:
             prediction.actual_attack = prediction.predicted_attack
-            prediction.feedback = (
-                "auto_labeled_high_confidence"
-                if prediction.confidence >= 0.90
-                else "auto_labeled_safe"
-            )
+            prediction.feedback = "auto_labeled_high_confidence"
             self._save_feedback(prediction)
     
     def load_predictions(self, days: int = 7) -> List[Prediction]:
@@ -621,11 +615,14 @@ class AutoRetrainer:
         self.logger.info(f"Found {total_new} new labeled samples")
         
         # 2. Load original training data
+        _training_data_path = (
+            Path(__file__).parent / "data" / "training_data.json"
+        )
         try:
-            with open('ml/data/training_data.json', 'r') as f:
+            with open(_training_data_path, 'r') as f:
                 original_data = json.load(f)
         except FileNotFoundError:
-            self.logger.error("Original training data not found")
+            self.logger.error("Original training data not found at %s", _training_data_path)
             return {'success': False, 'reason': 'missing_original_data'}
         
         # 3. Build new samples from hashed feedback (privacy-preserving fallback)

@@ -300,6 +300,8 @@ try:
     _FORENSICS_AVAILABLE = True
 except ImportError:
     _FORENSICS_AVAILABLE = False
+    MemoryForensicsEngine = ForensicReport = ForensicEntry = None  # type: ignore[assignment,misc]
+    PoisonEvent = PoisonSeverity = MemoryCleanser = SkillFileScanner = None  # type: ignore[assignment,misc]
 
 # Framework deep integrations (v0.5.0)
 try:
@@ -322,6 +324,11 @@ try:
     _FRAMEWORKS_AVAILABLE = True
 except ImportError:
     _FRAMEWORKS_AVAILABLE = False
+    MemgarSecurityRunnable = MemgarChatMemory = MemgarConversationBufferMemory = None  # type: ignore[assignment,misc]
+    SecureVectorStoreRetriever = MemgarLCELMiddleware = MemgarDocumentFilter = None  # type: ignore[assignment,misc]
+    create_secure_lcel_chain = MemgarQueryEngineSecurity = MemgarIndexSecurity = None  # type: ignore[assignment,misc]
+    MemgarStorageContextSecurity = SecureVectorIndexRetriever = MemgarIngestionPipelineSecurity = None  # type: ignore[assignment,misc]
+    MemgarNodeFilter = create_secure_query_pipeline = None  # type: ignore[assignment,misc]
 
 
 # Domain-Aware Anomaly Detection (v0.5.16)
@@ -1031,13 +1038,6 @@ __all__ = [
     "RiskLevel",
     "HIGH_RISK_ACTIONS",
     "CRITICAL_ACTIONS",
-
-    # Auto-Protect (v0.5.3)
-    "auto_protect",
-    "auto_protect_off",
-    "auto_protect_status",
-    "AutoProtectConfig",
-    "AutoProtectStatus",
 
     # Threat Intelligence Feed (optional)
     "FEED_AVAILABLE",
