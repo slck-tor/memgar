@@ -10,8 +10,11 @@
 *.model
 *.weights
 
-# Keep model config files
+# Keep current model config, ignore backups and versioned snapshots
 !*.pkl.config.json
+*.pkl.backup
+*_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.pkl.config.json
+*_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.json
 
 # ============================================================================
 # Training Data (Optional - uncomment if too large)
@@ -190,3 +193,7 @@ site/
 # Keep JSON configs (except secrets)
 !*.json
 secrets.json
+
+# Generated ML artifacts: versioned model configs and training data snapshots
+ml/artifacts/*_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.pkl.config.json
+ml/data/training_data_v[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*.json
