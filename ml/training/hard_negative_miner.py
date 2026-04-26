@@ -98,6 +98,52 @@ class HardNegativeMiner:
             )
         return rows
 
+    def from_variants(
+        self,
+        variants: Sequence[Dict[str, Any]],
+        max_samples: int = 1000,
+    ) -> List[HardNegativeCandidate]:
+        """
+        Convert LLM-generated adversarial attack variants into hard-positive candidates.
+
+        Variants are already labeled attacks (label=1) — no FP score-band filter
+        is applied. They become difficult positive examples for retraining.
+        """
+        candidates: List[HardNegativeCandidate] = []
+        for row in variants:
+            text = _safe_text(row)
+            if len(text) < self.min_text_len:
+                continue
+            score = float(row.get("confidence", 0.95))
+            candidates.append(
+                HardNegativeCandidate(
+                    text=text,
+                    score=score,
+                    source=str(row.get("source", "llm_red_team")),
+                    reason="adversarial_variant",
+                    label=1,
+                )
+            )
+        return candidates[:max_samples]
+
+    def to_attack_examples(self, candidates: Sequence[HardNegativeCandidate]) -> List[Dict[str, Any]]:
+        """Convert adversarial candidates to training-data attack rows."""
+        rows: List[Dict[str, Any]] = []
+        for c in candidates:
+            rows.append(
+                {
+                    "text": c.text,
+                    "label": 1,
+                    "category": "attack",
+                    "subcategory": "adversarial_hard_positive",
+                    "confidence": min(1.0, max(0.5, c.score)),
+                    "source": c.source,
+                    "weight": 1.2,
+                    "reason": c.reason,
+                }
+            )
+        return rows
+
 
 def merge_training_examples(
     base_examples: Sequence[Any],

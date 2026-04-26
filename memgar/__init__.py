@@ -181,6 +181,36 @@ except ImportError:
     pass
 
 # =============================================================================
+# THREAT INTELLIGENCE FEED (Optional - requires cryptography)
+# =============================================================================
+FEED_AVAILABLE = False
+PatternFeed = None
+sync_feed = None
+
+try:
+    from memgar.feed.loader import FeedLoader as PatternFeed, sync_feed  # type: ignore[assignment]
+    from memgar.feed.models import FeedManifest, PatternBundle
+    from memgar.feed.verifier import FeedSignatureError, FeedVerifier
+    FEED_AVAILABLE = True
+except ImportError:
+    FeedManifest = None  # type: ignore[assignment,misc]
+    PatternBundle = None  # type: ignore[assignment,misc]
+    FeedSignatureError = None  # type: ignore[assignment,misc]
+    FeedVerifier = None  # type: ignore[assignment,misc]
+
+# =============================================================================
+# OBSERVABILITY (Optional - requires prometheus_client)
+# =============================================================================
+OBSERVABILITY_AVAILABLE = False
+start_metrics_server = None
+
+try:
+    from memgar.observability import start_metrics_server  # type: ignore[assignment]
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    pass
+
+# =============================================================================
 # MULTI-MODAL DETECTION (Optional - enhanced with PIL, scipy, etc.)
 # =============================================================================
 MULTIMODAL_AVAILABLE = False
@@ -892,4 +922,17 @@ __all__ = [
     "auto_protect_status",
     "AutoProtectConfig",
     "AutoProtectStatus",
+
+    # Threat Intelligence Feed (optional)
+    "FEED_AVAILABLE",
+    "PatternFeed",
+    "sync_feed",
+    "FeedManifest",
+    "PatternBundle",
+    "FeedSignatureError",
+    "FeedVerifier",
+
+    # Observability (optional)
+    "OBSERVABILITY_AVAILABLE",
+    "start_metrics_server",
 ]

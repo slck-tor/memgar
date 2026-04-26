@@ -138,6 +138,35 @@ def run_quality_gate(
     return 0, summary
 
 
+def compare_to_baseline(
+    new_metrics: Dict[str, float],
+    baseline_metrics: Dict[str, float],
+    max_regression: float = 0.02,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Compare new metrics against a baseline; reject if regression > max_regression.
+
+    Args:
+        new_metrics: dict with at least "precision" and "recall" floats.
+        baseline_metrics: previous reference metrics, same shape.
+        max_regression: absolute drop allowed before rejecting (default 2%).
+
+    Returns:
+        (passed, details) where details contains per-metric deltas.
+    """
+    details: Dict[str, Any] = {"deltas": {}, "max_regression": max_regression}
+    passed = True
+    for key in ("precision", "recall"):
+        new_v = float(new_metrics.get(key, 0.0))
+        base_v = float(baseline_metrics.get(key, 0.0))
+        delta = new_v - base_v
+        details["deltas"][key] = delta
+        if delta < -max_regression:
+            passed = False
+            details.setdefault("regressions", []).append(key)
+    details["passed"] = passed
+    return passed, details
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Memgar ML release quality gate")
     parser.add_argument("--model-path", default="ml/artifacts/gradient_boost_model.pkl")

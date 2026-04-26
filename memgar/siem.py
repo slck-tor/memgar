@@ -126,6 +126,7 @@ class EventCategory(str, Enum):
     FORENSICS_FINDING  = "forensics_finding"
     AUTO_PROTECT_BLOCK = "auto_protect_block"
     PATTERN_GAP        = "pattern_gap"
+    DRIFT_DETECTED     = "drift_detected"
 
 
 # Severity mapping
@@ -156,6 +157,7 @@ _CLASS_MAP: Dict[EventCategory, OCSFClass] = {
     EventCategory.FORENSICS_FINDING:  OCSFClass.SECURITY_FINDING,
     EventCategory.AUTO_PROTECT_BLOCK: OCSFClass.SECURITY_FINDING,
     EventCategory.PATTERN_GAP:        OCSFClass.APPLICATION,
+    EventCategory.DRIFT_DETECTED:     OCSFClass.SECURITY_FINDING,
 }
 
 
@@ -951,6 +953,31 @@ class SIEMRouter:
                 logger.warning("[SIEM] Queue full — event dropped")
         else:
             self._send_batch([event])
+
+    def emit_drift_alert(
+        self,
+        psi: float,
+        severity_level: int,
+        window_size: int,
+        threshold: float,
+    ) -> None:
+        """Emit a score-distribution drift event to all configured SIEM sinks."""
+        _severity_names = {0: "info", 1: "low", 2: "medium", 3: "high", 4: "critical"}
+        sev = _severity_names.get(severity_level, "medium")
+        event = SIEMEvent(
+            category=EventCategory.DRIFT_DETECTED,
+            severity=sev,
+            message=f"Score distribution drift detected: PSI={psi:.4f} (threshold={threshold})",
+            risk_score=min(100, int(psi * 100)),
+            action="detected",
+            extra={
+                "psi": round(psi, 6),
+                "severity_level": severity_level,
+                "window_size": window_size,
+                "threshold": threshold,
+            },
+        )
+        self.emit(event)
 
     def flush(self) -> None:
         """Force immediate flush of pending events."""
