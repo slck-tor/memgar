@@ -62,10 +62,34 @@ class PatternBundle:
     def bundle_sha256(self) -> str:
         return hashlib.sha256(self.bundle_bytes()).hexdigest()
 
+    # Hard limits to prevent DoS via malicious feed
+    _MAX_THREATS = 10_000
+    _MAX_PATTERNS_PER_THREAT = 500
+    _MAX_KEYWORDS_PER_THREAT = 200
+    _MAX_PATTERN_LEN = 2_000
+    _MAX_ID_LEN = 64
+    _MAX_NAME_LEN = 256
+
     def to_threat_objects(self) -> List[Threat]:
+        if len(self.patterns) > self._MAX_THREATS:
+            raise ValueError(
+                f"Feed contains {len(self.patterns)} threats, exceeds limit of {self._MAX_THREATS}"
+            )
         out: List[Threat] = []
         for p in self.patterns:
             try:
+                if not isinstance(p, dict):
+                    continue
+
+                threat_id = str(p.get("id", ""))[:self._MAX_ID_LEN]
+                threat_name = str(p.get("name", ""))[:self._MAX_NAME_LEN]
+
+                raw_patterns = list(p.get("patterns", []))[:self._MAX_PATTERNS_PER_THREAT]
+                # Truncate overly long individual patterns (guards against ReDoS)
+                raw_patterns = [str(pat)[:self._MAX_PATTERN_LEN] for pat in raw_patterns]
+
+                raw_keywords = list(p.get("keywords", []))[:self._MAX_KEYWORDS_PER_THREAT]
+
                 cat_raw = str(p.get("category", "anomaly")).lower()
                 sev_raw = str(p.get("severity", "medium")).lower()
                 try:
@@ -79,14 +103,14 @@ class PatternBundle:
 
                 out.append(
                     Threat(
-                        id=str(p.get("id", "")),
-                        name=str(p.get("name", "")),
-                        description=str(p.get("description", "")),
+                        id=threat_id,
+                        name=threat_name,
+                        description=str(p.get("description", ""))[:1000],
                         category=category,
                         severity=severity,
-                        patterns=list(p.get("patterns", [])),
-                        keywords=list(p.get("keywords", [])),
-                        examples=list(p.get("examples", [])),
+                        patterns=raw_patterns,
+                        keywords=raw_keywords,
+                        examples=list(p.get("examples", []))[:50],
                         mitre_attack=p.get("mitre_attack"),
                     )
                 )

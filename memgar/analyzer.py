@@ -37,14 +37,39 @@ def _load_patterns_fast() -> list:
     """Load patterns from pickle cache (3ms) or full import (3500ms), then merge feed patterns."""
     import os, pickle, hashlib
     from pathlib import Path
+
+    class _RestrictedUnpickler(pickle.Unpickler):
+        """Only allow the built-in types and our own model classes."""
+        _ALLOWED = {
+            ("builtins", "dict"), ("builtins", "list"), ("builtins", "tuple"),
+            ("builtins", "str"), ("builtins", "int"), ("builtins", "float"),
+            ("builtins", "bool"), ("builtins", "NoneType"),
+            ("memgar.models", "Threat"), ("memgar.models", "ThreatCategory"),
+            ("memgar.models", "Severity"),
+        }
+        def find_class(self, module: str, name: str):
+            if (module, name) not in self._ALLOWED:
+                raise pickle.UnpicklingError(f"Forbidden: {module}.{name}")
+            return super().find_class(module, name)
+
     patterns: list = []
     try:
         cache_dir = os.environ.get("MEMGAR_CACHE_DIR", "").strip()
-        base = Path(cache_dir) if cache_dir else Path(os.path.expanduser("~")) / ".cache" / "memgar"
+        if cache_dir:
+            # Resolve path and ensure it stays within the home directory
+            resolved = Path(cache_dir).resolve()
+            home = Path.home().resolve()
+            try:
+                resolved.relative_to(home)
+                base = resolved
+            except ValueError:
+                base = home / ".cache" / "memgar"
+        else:
+            base = Path(os.path.expanduser("~")) / ".cache" / "memgar"
         cache_file = base / "patterns_v1.pkl"
         if cache_file.exists():
             with open(cache_file, "rb") as f:
-                payload = pickle.load(f)
+                payload = _RestrictedUnpickler(f).load()
             patterns_path = Path(__file__).parent / "patterns.py"
             file_hash = hashlib.sha256(patterns_path.read_bytes()).hexdigest()[:16]
             if payload.get("hash") == file_hash:
@@ -951,6 +976,13 @@ class Analyzer:
         # Pre-compile regex patterns for performance
         self._compiled_patterns: dict[str, list[re.Pattern[str]]] = {}
         self._compile_patterns()
+
+        # Layer 3: per-source trust scores (populated via register_source_trust)
+        self._doc_trust_scores: dict[str, float] = {}
+        # Layer 4: per-agent behavioral baselines (lazily created on first observation)
+        self._baselines: dict[str, Any] = {}
+        # Production feedback — set None so hasattr race in threaded analyze() is avoided
+        self._storage_manager: Any = None
     
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
@@ -971,12 +1003,23 @@ class Analyzer:
             for keyword in threat.keywords:
                 _get_keyword_pattern(keyword)
     
+    def register_source_trust(self, source_id: str, trust_score: float) -> None:
+        """Register a trust score for a content source (Layer 3).
+
+        Args:
+            source_id: Unique identifier for the source (matches MemoryEntry.source_id)
+            trust_score: Trust level 0.0 (fully untrusted) to 1.0 (fully trusted)
+        """
+        self._doc_trust_scores[source_id] = max(0.0, min(1.0, trust_score))
+
     def analyze(self, entry: MemoryEntry) -> AnalysisResult:
         """
-        Analyze a memory entry for threats.
+        Analyze a memory entry for threats (all 4 layers).
 
-        Runs the content through all enabled analysis layers and
-        returns a decision with detailed threat information.
+        Layer 1 — Pattern matching (regex + keywords, <1ms)
+        Layer 2 — Semantic analysis via LLM (optional, ~200ms)
+        Layer 3 — Trust-aware source scoring (adjusts risk by source trust)
+        Layer 4 — Behavioral baseline deviation (per-agent anomaly detection)
 
         Args:
             entry: The memory entry to analyze
@@ -985,6 +1028,26 @@ class Analyzer:
             AnalysisResult with decision, risk score, and detected threats
         """
         result = self._analyze_internal(entry)
+
+        # Layer 4: Behavioral baseline deviation detection (per-agent)
+        try:
+            from memgar.behavioral_baseline import BehavioralBaseline, DeviationLevel
+            agent_id = (entry.metadata or {}).get("agent_id", "default")
+            bl = self._baselines.setdefault(agent_id, BehavioralBaseline(agent_id=agent_id))
+            bl.observe("scan_risk_score", float(result.risk_score))
+            bl.observe("scan_block_rate", 1.0 if result.decision == Decision.BLOCK else 0.0)
+            report = bl.check()
+            if report.level in (DeviationLevel.SUSPICIOUS, DeviationLevel.CRITICAL) and result.risk_score > 0:
+                boost = 30 if report.level == DeviationLevel.CRITICAL else 15
+                result.risk_score = min(100, result.risk_score + boost)
+                result.decision = self._make_decision(result.threats, result.risk_score)
+                result.layers_used = list(result.layers_used) + ["behavioral_baseline"]
+                result.explanation = (
+                    f"[L4:{report.level.value}] " + result.explanation
+                )
+        except Exception:
+            pass
+
         # Emit Prometheus metrics — non-fatal: metrics must never break analysis.
         try:
             from memgar.observability.metrics import (
@@ -1001,7 +1064,36 @@ class Analyzer:
                 _drift_monitor.record_score(result.risk_score)
         except Exception:
             pass
+
+        # Production feedback loop — record prediction for continuous learning
+        try:
+            import hashlib as _hashlib
+            import time as _time
+            from ml.continuous_learning import Prediction, StorageManager
+            if self._storage_manager is None:
+                self._storage_manager = StorageManager()
+            _hash = _hashlib.sha256(entry.content.encode()).hexdigest()[:32]
+            self._storage_manager.save_prediction(Prediction(
+                id="",
+                content_hash=_hash,
+                predicted_attack=(result.decision != Decision.ALLOW),
+                confidence=result.risk_score / 100.0,
+                timestamp=_time.time(),
+            ))
+        except Exception:
+            pass
+
         return result
+
+    async def analyze_async(self, entry: MemoryEntry) -> AnalysisResult:
+        """Async wrapper for analyze() — safe for use in asyncio-based frameworks.
+
+        Runs the synchronous analyze() in the default thread-pool executor so the
+        event loop is never blocked by pattern matching or LLM calls.
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.analyze, entry)
 
     def _analyze_internal(self, entry: MemoryEntry) -> AnalysisResult:
         """Core analysis implementation (called by analyze())."""
@@ -1089,9 +1181,25 @@ class Analyzer:
         risk_score = self._calculate_risk_score(threats, context_score)
         decision = self._make_decision(threats, risk_score)
         explanation = self._generate_explanation(threats, decision)
-        
+
+        # Layer 3: Trust-aware source scoring
+        if entry.source_id and entry.source_id in self._doc_trust_scores:
+            trust = self._doc_trust_scores[entry.source_id]
+            if trust < 0.3:
+                # Low-trust source — boost risk proportionally to distrust level
+                boost = int(min(30, (0.3 - trust) / 0.3 * 30))
+                risk_score = min(100, risk_score + boost)
+                layers_used.append("trust_scoring")
+            elif trust >= 0.8 and risk_score < 50:
+                # High-trust source — marginal reduction for borderline content
+                risk_score = max(0, risk_score - 5)
+                layers_used.append("trust_scoring")
+            if "trust_scoring" in layers_used:
+                decision = self._make_decision(threats, risk_score)
+                explanation = self._generate_explanation(threats, decision)
+
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        
+
         return AnalysisResult(
             decision=decision,
             risk_score=risk_score,

@@ -6,6 +6,7 @@ import gzip
 import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, Optional
 
@@ -98,11 +99,44 @@ class FeedLoader:
                 return asset.get("browser_download_url")
         return None
 
+    # Domains allowed as feed download sources.
+    _ALLOWED_HOSTS = frozenset({
+        "github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "github.githubusercontent.com",
+        "releases.githubusercontent.com",
+    })
+    # Hard limits to prevent zip-bomb / memory exhaustion.
+    _MAX_COMPRESSED_BYTES = 20 * 1024 * 1024    # 20 MB
+    _MAX_DECOMPRESSED_BYTES = 100 * 1024 * 1024  # 100 MB
+
     def _download(self, url: str) -> bytes:
+        # Validate URL is from an allowed GitHub host (SSRF prevention).
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("https",):
+            raise ValueError(f"Feed URL must use HTTPS, got: {parsed.scheme!r}")
+        if parsed.hostname not in self._ALLOWED_HOSTS:
+            raise ValueError(
+                f"Feed URL host {parsed.hostname!r} is not in the allowed list. "
+                f"Allowed: {sorted(self._ALLOWED_HOSTS)}"
+            )
+
         req = urllib.request.Request(url, headers={"User-Agent": f"memgar/{__version__}"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            compressed = resp.read()
-        return gzip.decompress(compressed)
+            compressed = resp.read(self._MAX_COMPRESSED_BYTES + 1)
+
+        if len(compressed) > self._MAX_COMPRESSED_BYTES:
+            raise ValueError(
+                f"Compressed feed exceeds {self._MAX_COMPRESSED_BYTES // (1024*1024)} MB limit"
+            )
+
+        decompressed = gzip.decompress(compressed)
+        if len(decompressed) > self._MAX_DECOMPRESSED_BYTES:
+            raise ValueError(
+                f"Decompressed feed exceeds {self._MAX_DECOMPRESSED_BYTES // (1024*1024)} MB limit"
+            )
+        return decompressed
 
     def _parse(self, raw_bytes: bytes) -> Optional[PatternBundle]:
         try:

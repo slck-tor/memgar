@@ -62,7 +62,7 @@ from memgar.models import (
 from memgar.analyzer import Analyzer, QuickAnalyzer
 from memgar.scanner import Scanner
 from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id, pattern_stats
-from memgar.config import MemgarConfig
+from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -634,16 +634,35 @@ class Memgar:
             source_id=source_id
         )
         return self.analyzer.analyze(entry)
-    
-    def scan_file(self, path: str) -> ScanResult:
+
+    async def analyze_async(
+        self,
+        content: str,
+        source_type: str = "unknown",
+        source_id: Optional[str] = None,
+    ) -> "AnalysisResult":
+        """Async version of analyze() — runs in thread-pool, safe for asyncio frameworks."""
+        entry = MemoryEntry(content=content, source_type=source_type, source_id=source_id)
+        return await self.analyzer.analyze_async(entry)
+
+    def register_source_trust(self, source_id: str, trust_score: float) -> None:
+        """Register a trust score for a content source (Layer 3).
+
+        Args:
+            source_id: Identifier matching the source_id passed to analyze().
+            trust_score: 0.0 (fully untrusted) to 1.0 (fully trusted).
+        """
+        self.analyzer.register_source_trust(source_id, trust_score)
+
+    def scan_file(self, path: str) -> "ScanResult":
         """
         Scan a file for memory poisoning threats.
-        
+
         Supports JSON, SQLite, and plain text files.
-        
+
         Args:
             path: Path to the file to scan.
-        
+
         Returns:
             ScanResult with statistics and detected threats.
         """
@@ -709,6 +728,27 @@ def get_version() -> str:
 
 def check_installation() -> dict:
     """Check what features are available."""
+    # Layer 3: trust scoring wired into Analyzer._doc_trust_scores
+    try:
+        from memgar.analyzer import Analyzer as _A
+        _layer3_ok = hasattr(_A, "register_source_trust")
+    except Exception:
+        _layer3_ok = False
+
+    # Layer 4: behavioral baseline wired into Analyzer._baselines
+    try:
+        from memgar.behavioral_baseline import BehavioralBaseline as _BL  # noqa: F401
+        _layer4_ok = True
+    except Exception:
+        _layer4_ok = False
+
+    # Adversarial red-team module
+    try:
+        from ml.adversarial import AttackGenerator as _AG  # noqa: F401
+        _adversarial_ok = True
+    except Exception:
+        _adversarial_ok = False
+
     return {
         "version": __version__,
         "core": True,
@@ -719,8 +759,12 @@ def check_installation() -> dict:
         "agents": True,
         "layer2_sanitization": True,
         "layer2_provenance": True,
-        "layer3_retrieval": True,
-        "layer4_monitoring": True,
+        "layer3_retrieval": _layer3_ok,
+        "layer4_monitoring": _layer4_ok,
+        "async_analyze": True,
+        "feed": FEED_AVAILABLE,
+        "observability": OBSERVABILITY_AVAILABLE,
+        "adversarial": _adversarial_ok,
     }
 
 
@@ -950,4 +994,14 @@ __all__ = [
     # Observability (optional)
     "OBSERVABILITY_AVAILABLE",
     "start_metrics_server",
+
+    # Config dataclasses
+    "FeedConfig",
+    "ObservabilityConfig",
+
+    # Layer 3+4 components (now wired into Analyzer)
+    "BehavioralBaseline",
+    "DeviationLevel",
+    "DeviationReport",
+    "BaselineIntegration",
 ]
