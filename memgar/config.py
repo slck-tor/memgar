@@ -315,7 +315,7 @@ class CloudConfig:
 class FeedConfig:
     """Threat intelligence feed configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     auto_sync: bool = True
     max_age_days: int = 7
     github_repo: str = "slcxtor/memgar"

@@ -79,33 +79,61 @@ def _sign_bundle(bundle_bytes: bytes, private_key_path: Path) -> tuple[str, str]
     """Sign *bundle_bytes* with an Ed25519 PEM private key.
 
     Returns (signature_b64, public_key_b64).
+    Tries the `cryptography` library first; falls back to `openssl` subprocess.
     """
+    # --- attempt 1: cryptography library ---
     try:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import (
-            Encoding,
-            NoEncryption,
-            PrivateFormat,
-            PublicFormat,
-            load_pem_private_key,
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        pem_bytes = private_key_path.read_bytes()
+        private_key = load_pem_private_key(pem_bytes, password=None)
+        if not isinstance(private_key, Ed25519PrivateKey):
+            raise ValueError(f"{private_key_path} does not contain an Ed25519 private key")
+        sig_b64 = base64.b64encode(private_key.sign(bundle_bytes)).decode()
+        pub_b64 = base64.b64encode(private_key.public_key().public_bytes_raw()).decode()
+        return sig_b64, pub_b64
+    except BaseException:  # pyo3_runtime.PanicException is BaseException, not Exception
+        pass  # fall through to openssl
+
+    # --- attempt 2: openssl subprocess (no extra Python deps) ---
+    import shutil
+    import subprocess
+    import tempfile
+
+    if not shutil.which("openssl"):
+        print("ERROR: neither 'cryptography' nor 'openssl' is available.", file=sys.stderr)
+        raise SystemExit(1)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tf:
+        tf.write(bundle_bytes)
+        tmp_in = tf.name
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".sig") as sf:
+        tmp_sig = sf.name
+
+    try:
+        r = subprocess.run(
+            ["openssl", "pkeyutl", "-sign", "-inkey", str(private_key_path),
+             "-rawin", "-in", tmp_in, "-out", tmp_sig],
+            capture_output=True,
         )
-    except ImportError as exc:
-        print(
-            "ERROR: 'cryptography' is required. Install with: pip install 'memgar[feed]'",
-            file=sys.stderr,
+        if r.returncode != 0:
+            print(f"ERROR (openssl sign): {r.stderr.decode()}", file=sys.stderr)
+            raise SystemExit(1)
+
+        sig_b64 = base64.b64encode(Path(tmp_sig).read_bytes()).decode()
+
+        # Extract raw 32-byte public key from DER (last 32 bytes)
+        r2 = subprocess.run(
+            ["openssl", "pkey", "-in", str(private_key_path), "-pubout", "-outform", "DER"],
+            capture_output=True,
         )
-        raise SystemExit(1) from exc
-
-    pem_bytes = private_key_path.read_bytes()
-    private_key = load_pem_private_key(pem_bytes, password=None)
-    if not isinstance(private_key, Ed25519PrivateKey):
-        raise ValueError(f"{private_key_path} does not contain an Ed25519 private key")
-
-    sig_bytes = private_key.sign(bundle_bytes)
-    sig_b64 = base64.b64encode(sig_bytes).decode()
-
-    pub_bytes = private_key.public_key().public_bytes_raw()
-    pub_b64 = base64.b64encode(pub_bytes).decode()
+        if r2.returncode != 0:
+            print(f"ERROR (openssl pubkey): {r2.stderr.decode()}", file=sys.stderr)
+            raise SystemExit(1)
+        pub_b64 = base64.b64encode(r2.stdout[-32:]).decode()
+    finally:
+        Path(tmp_in).unlink(missing_ok=True)
+        Path(tmp_sig).unlink(missing_ok=True)
 
     return sig_b64, pub_b64
 
@@ -156,8 +184,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir",
-        default="dist",
-        help="Directory to write memgar-feed.json.gz into (default: dist/)",
+        default="feeds",
+        help="Directory to write memgar-feed.json.gz into (default: feeds/)",
     )
     parser.add_argument(
         "--feed-version",
