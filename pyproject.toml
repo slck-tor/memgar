@@ -89,8 +89,12 @@ feed = [
 observability = [
     "prometheus_client>=0.17.0",
 ]
+server = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+]
 all = [
-    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability]",
+    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,server]",
 ]
 
 [project.scripts]

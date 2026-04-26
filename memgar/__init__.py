@@ -211,6 +211,16 @@ except ImportError:
     pass
 
 # =============================================================================
+# REST SERVER (Optional — requires fastapi + uvicorn)
+# =============================================================================
+create_app = None  # type: ignore[assignment]
+
+try:
+    from memgar.server import create_app  # type: ignore[assignment]
+except ImportError:
+    pass
+
+# =============================================================================
 # MULTI-MODAL DETECTION (Optional - enhanced with PIL, scipy, etc.)
 # =============================================================================
 MULTIMODAL_AVAILABLE = False
@@ -727,15 +737,17 @@ def get_version() -> str:
 
 
 def check_installation() -> dict:
-    """Check what features are available."""
-    # Layer 3: trust scoring wired into Analyzer._doc_trust_scores
+    """Return a real-time status report of all Memgar features."""
+    from pathlib import Path
+
+    # Layer 3: trust scoring wired into Analyzer
     try:
         from memgar.analyzer import Analyzer as _A
         _layer3_ok = hasattr(_A, "register_source_trust")
     except Exception:
         _layer3_ok = False
 
-    # Layer 4: behavioral baseline wired into Analyzer._baselines
+    # Layer 4: behavioral baseline importable
     try:
         from memgar.behavioral_baseline import BehavioralBaseline as _BL  # noqa: F401
         _layer4_ok = True
@@ -749,22 +761,67 @@ def check_installation() -> dict:
     except Exception:
         _adversarial_ok = False
 
+    # FastAPI server available
+    try:
+        from memgar.server import create_app as _ca  # noqa: F401
+        import fastapi as _fa  # noqa: F401
+        _server_ok = True
+    except ImportError:
+        _server_ok = False
+
+    # ML model file on disk
+    _model_path = Path("ml/artifacts/gradient_boost_model.pkl")
+    _model_ok = _model_path.exists()
+    _model_version: Optional[str] = None
+    if _model_ok:
+        try:
+            import json as _json
+            _cfg = _json.loads((_model_path.with_suffix(".pkl.config.json")).read_text())
+            _hist = _cfg.get("training_history", [])
+            if _hist:
+                import datetime as _dt
+                ts = _hist[-1].get("timestamp", 0)
+                _model_version = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    # Feed cache status
+    _feed_cached = False
+    _feed_version: Optional[str] = None
+    try:
+        from memgar.feed.cache import FeedCache as _FC
+        _fc = _FC()
+        if not _fc.is_stale():
+            bundle = _fc.get_cached_bundle()
+            if bundle is not None:
+                _feed_cached = True
+                _feed_version = bundle.manifest.feed_version
+    except Exception:
+        pass
+
     return {
         "version": __version__,
         "core": True,
         "patterns": len(PATTERNS),
+        # Analysis layers
+        "layer1_pattern_matching": True,
+        "layer2_llm_semantic": LLM_AVAILABLE,
+        "layer3_trust_scoring": _layer3_ok,
+        "layer4_behavioral_baseline": _layer4_ok,
+        "async_analyze": True,
+        # Optional features
         "semantic": SEMANTIC_AVAILABLE,
-        "llm": LLM_AVAILABLE,
         "multimodal": MULTIMODAL_AVAILABLE,
         "agents": True,
-        "layer2_sanitization": True,
-        "layer2_provenance": True,
-        "layer3_retrieval": _layer3_ok,
-        "layer4_monitoring": _layer4_ok,
-        "async_analyze": True,
         "feed": FEED_AVAILABLE,
+        "feed_cached": _feed_cached,
+        "feed_version": _feed_version,
         "observability": OBSERVABILITY_AVAILABLE,
         "adversarial": _adversarial_ok,
+        "server": _server_ok,
+        # ML model
+        "ml_model": _model_ok,
+        "ml_model_date": _model_version,
     }
 
 
@@ -994,6 +1051,9 @@ __all__ = [
     # Observability (optional)
     "OBSERVABILITY_AVAILABLE",
     "start_metrics_server",
+
+    # REST server (optional, requires fastapi + uvicorn)
+    "create_app",
 
     # Config dataclasses
     "FeedConfig",
