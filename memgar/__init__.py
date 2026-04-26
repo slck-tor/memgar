@@ -634,16 +634,35 @@ class Memgar:
             source_id=source_id
         )
         return self.analyzer.analyze(entry)
-    
-    def scan_file(self, path: str) -> ScanResult:
+
+    async def analyze_async(
+        self,
+        content: str,
+        source_type: str = "unknown",
+        source_id: Optional[str] = None,
+    ) -> "AnalysisResult":
+        """Async version of analyze() — runs in thread-pool, safe for asyncio frameworks."""
+        entry = MemoryEntry(content=content, source_type=source_type, source_id=source_id)
+        return await self.analyzer.analyze_async(entry)
+
+    def register_source_trust(self, source_id: str, trust_score: float) -> None:
+        """Register a trust score for a content source (Layer 3).
+
+        Args:
+            source_id: Identifier matching the source_id passed to analyze().
+            trust_score: 0.0 (fully untrusted) to 1.0 (fully trusted).
+        """
+        self.analyzer.register_source_trust(source_id, trust_score)
+
+    def scan_file(self, path: str) -> "ScanResult":
         """
         Scan a file for memory poisoning threats.
-        
+
         Supports JSON, SQLite, and plain text files.
-        
+
         Args:
             path: Path to the file to scan.
-        
+
         Returns:
             ScanResult with statistics and detected threats.
         """

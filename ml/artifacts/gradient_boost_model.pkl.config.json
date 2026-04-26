@@ -92,8 +92,8 @@
   },
   "training_history": [
     {
-      "timestamp": 1777161611.7280116,
-      "duration_sec": 0.542,
+      "timestamp": 1777237930.041322,
+      "duration_sec": 0.572,
       "estimator": "GradientBoostingClassifier",
       "calibrated": true,
       "train_samples": 6781,
