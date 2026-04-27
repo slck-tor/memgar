@@ -3678,5 +3678,50 @@ def feed_verify() -> None:
         raise SystemExit(1)
 
 
+@main.command("serve")
+@click.option("--host", default="0.0.0.0", show_default=True, help="Bind host")
+@click.option("--port", default=8000, show_default=True, type=int, help="Bind port")
+@click.option("--rate-limit", "rate_limit_rpm", default=60, show_default=True,
+              type=int, help="Max requests per minute per IP")
+@click.option("--reload", is_flag=True, help="Enable auto-reload (development only)")
+@click.option("--workers", default=1, show_default=True, type=int,
+              help="Number of worker processes")
+def serve(host: str, port: int, rate_limit_rpm: int, reload: bool, workers: int) -> None:
+    """Start the Memgar REST API server (requires memgar[server])."""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print(
+            "[red]uvicorn not installed.[/red] "
+            "Run: [bold]pip install 'memgar[server]'[/bold]"
+        )
+        raise SystemExit(1)
+
+    try:
+        from memgar.server import create_app
+    except ImportError as exc:
+        console.print(f"[red]FastAPI not available:[/red] {exc}")
+        raise SystemExit(1)
+
+    console.print(
+        f"[green]Starting Memgar API server[/green] on "
+        f"[bold]http://{host}:{port}[/bold]  "
+        f"(rate limit: {rate_limit_rpm} req/min)"
+    )
+    console.print(f"  [dim]Docs:[/dim]   http://{host}:{port}/docs")
+    console.print(f"  [dim]Health:[/dim] http://{host}:{port}/health")
+    console.print(f"  [dim]Ready:[/dim]  http://{host}:{port}/ready")
+
+    app = create_app(rate_limit_rpm=rate_limit_rpm)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        reload=reload,
+        workers=workers if not reload else 1,
+        log_level="info",
+    )
+
+
 if __name__ == "__main__":
     main()

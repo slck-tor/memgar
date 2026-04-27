@@ -1024,7 +1024,7 @@ class LLMAnalyzer:
         mode: Optional[str] = None,
     ) -> LLMResult:
         """Async shim around the sync client (runs in the default executor)."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: self.analyze(content, context, mode))
 
     def analyze_batch(
