@@ -221,6 +221,21 @@ except ImportError:
     pass
 
 # =============================================================================
+# OPENTELEMETRY TRACING (Optional — requires opentelemetry-sdk)
+# =============================================================================
+TRACING_AVAILABLE = False
+configure_tracing = None  # type: ignore[assignment]
+
+try:
+    from memgar.observability.tracing import (  # type: ignore[assignment]
+        configure_tracing,
+        get_tracer,
+        _OTEL_AVAILABLE as TRACING_AVAILABLE,
+    )
+except ImportError:
+    get_tracer = None  # type: ignore[assignment]
+
+# =============================================================================
 # MULTI-MODAL DETECTION (Optional - enhanced with PIL, scipy, etc.)
 # =============================================================================
 MULTIMODAL_AVAILABLE = False
@@ -824,6 +839,7 @@ def check_installation() -> dict:
         "feed_cached": _feed_cached,
         "feed_version": _feed_version,
         "observability": OBSERVABILITY_AVAILABLE,
+        "tracing": TRACING_AVAILABLE,
         "adversarial": _adversarial_ok,
         "server": _server_ok,
         # ML model
@@ -1054,6 +1070,11 @@ __all__ = [
 
     # REST server (optional, requires fastapi + uvicorn)
     "create_app",
+
+    # OpenTelemetry distributed tracing (optional)
+    "TRACING_AVAILABLE",
+    "configure_tracing",
+    "get_tracer",
 
     # Config dataclasses
     "FeedConfig",

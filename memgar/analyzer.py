@@ -1027,26 +1027,47 @@ class Analyzer:
         Returns:
             AnalysisResult with decision, risk score, and detected threats
         """
-        result = self._analyze_internal(entry)
+        from memgar.observability.tracing import get_tracer
+        tracer = get_tracer()
 
-        # Layer 4: Behavioral baseline deviation detection (per-agent)
-        try:
-            from memgar.behavioral_baseline import BehavioralBaseline, DeviationLevel
-            agent_id = (entry.metadata or {}).get("agent_id", "default")
-            bl = self._baselines.setdefault(agent_id, BehavioralBaseline(agent_id=agent_id))
-            bl.observe("scan_risk_score", float(result.risk_score))
-            bl.observe("scan_block_rate", 1.0 if result.decision == Decision.BLOCK else 0.0)
-            report = bl.check()
-            if report.level in (DeviationLevel.SUSPICIOUS, DeviationLevel.CRITICAL) and result.risk_score > 0:
-                boost = 30 if report.level == DeviationLevel.CRITICAL else 15
-                result.risk_score = min(100, result.risk_score + boost)
-                result.decision = self._make_decision(result.threats, result.risk_score)
-                result.layers_used = list(result.layers_used) + ["behavioral_baseline"]
-                result.explanation = (
-                    f"[L4:{report.level.value}] " + result.explanation
-                )
-        except Exception:
-            pass
+        with tracer.start_as_current_span("memgar.analyze") as root_span:
+            root_span.set_attribute("memgar.content_length", len(entry.content or ""))
+            root_span.set_attribute("memgar.source_type", entry.source_type or "unknown")
+            root_span.set_attribute(
+                "memgar.agent_id", (entry.metadata or {}).get("agent_id", "default")
+            )
+
+            result = self._analyze_internal(entry)
+
+            # Layer 4: Behavioral baseline deviation detection (per-agent)
+            with tracer.start_as_current_span("memgar.layer4.behavioral_baseline") as l4:
+                try:
+                    from memgar.behavioral_baseline import BehavioralBaseline, DeviationLevel
+                    agent_id = (entry.metadata or {}).get("agent_id", "default")
+                    bl = self._baselines.setdefault(agent_id, BehavioralBaseline(agent_id=agent_id))
+                    bl.observe("scan_risk_score", float(result.risk_score))
+                    bl.observe("scan_block_rate", 1.0 if result.decision == Decision.BLOCK else 0.0)
+                    report = bl.check()
+                    l4.set_attribute("memgar.l4.agent_id", agent_id)
+                    l4.set_attribute("memgar.l4.deviation", report.level.value)
+                    if report.level in (DeviationLevel.SUSPICIOUS, DeviationLevel.CRITICAL) and result.risk_score > 0:
+                        boost = 30 if report.level == DeviationLevel.CRITICAL else 15
+                        result.risk_score = min(100, result.risk_score + boost)
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.layers_used = list(result.layers_used) + ["behavioral_baseline"]
+                        result.explanation = f"[L4:{report.level.value}] " + result.explanation
+                        l4.set_attribute("memgar.l4.risk_delta", boost)
+                    else:
+                        l4.set_attribute("memgar.l4.risk_delta", 0)
+                except Exception:
+                    pass
+
+            # Set final root-span attributes after all layers have run
+            root_span.set_attribute("memgar.decision", result.decision.value)
+            root_span.set_attribute("memgar.risk_score", result.risk_score)
+            root_span.set_attribute("memgar.threat_count", len(result.threats))
+            root_span.set_attribute("memgar.layers_used", ",".join(result.layers_used))
+            root_span.set_attribute("memgar.analysis_time_ms", result.analysis_time_ms)
 
         # Emit Prometheus metrics — non-fatal: metrics must never break analysis.
         try:
@@ -1134,20 +1155,23 @@ class Analyzer:
                     layers_used=["whitelist"]
                 )
         
+        from memgar.observability.tracing import get_tracer
+        tracer = get_tracer()
+
         # Layer 1: Pattern Matching (check both original and normalized)
-        threats = self._layer1_pattern_matching(content)
-        if check_content != content:
-            # Also check normalized content for obfuscated attacks
-            normalized_threats = self._layer1_pattern_matching(check_content)
-            # Merge threats, avoiding duplicates
-            existing_ids = {t.threat.id for t in threats}
-            for t in normalized_threats:
-                if t.threat.id not in existing_ids:
-                    threats.append(t)
+        with tracer.start_as_current_span("memgar.layer1.pattern_matching") as l1:
+            threats = self._layer1_pattern_matching(content)
+            if check_content != content:
+                normalized_threats = self._layer1_pattern_matching(check_content)
+                existing_ids = {t.threat.id for t in threats}
+                for t in normalized_threats:
+                    if t.threat.id not in existing_ids:
+                        threats.append(t)
+            l1.set_attribute("memgar.l1.threat_count", len(threats))
+            l1.set_attribute("memgar.l1.patterns_checked", len(self.patterns))
         layers_used = ["pattern_matching"]
-        
-        # NEW: Sliding Window Analysis for long content (Many-Shot detection)
-        # This catches hidden payloads buried in long, seemingly innocent text
+
+        # Sliding Window Analysis for long content (Many-Shot detection)
         if self.use_sliding_window and len(content) > self.window_size:
             window_threats = self._sliding_window_analysis(content)
             existing_ids = {t.threat.id for t in threats}
@@ -1156,47 +1180,50 @@ class Analyzer:
                     threats.append(t)
             if window_threats:
                 layers_used.append("sliding_window")
-        
+
         # Apply context scoring to reduce false positives
         context_score = _get_context_score(content)
         if context_score > 0.3 and threats:
-            # Content seems safe, filter low-confidence matches
-            threats = [t for t in threats if t.confidence > 0.7 or 
-                      t.threat.severity in [Severity.CRITICAL, Severity.HIGH]]
-        
+            threats = [t for t in threats if t.confidence > 0.7 or
+                       t.threat.severity in [Severity.CRITICAL, Severity.HIGH]]
+
         # Layer 2: Semantic Analysis (if enabled)
-        # CRITICAL FIX: Layer 2 now runs INDEPENDENTLY of Layer 1 results
-        # This allows LLM to catch bypasses that regex misses (Turkish, scrambled words, etc.)
         if self.use_llm:
-            semantic_threats = self._layer2_semantic_analysis(content, threats)
-            if semantic_threats:
-                # Merge semantic threats with pattern threats
-                existing_ids = {t.threat.id for t in threats}
-                for t in semantic_threats:
-                    if t.threat.id not in existing_ids:
-                        threats.append(t)
-                layers_used.append("semantic_analysis")
-        
+            with tracer.start_as_current_span("memgar.layer2.semantic_analysis") as l2:
+                semantic_threats = self._layer2_semantic_analysis(content, threats)
+                l2.set_attribute("memgar.l2.threat_count", len(semantic_threats))
+                if semantic_threats:
+                    existing_ids = {t.threat.id for t in threats}
+                    for t in semantic_threats:
+                        if t.threat.id not in existing_ids:
+                            threats.append(t)
+                    layers_used.append("semantic_analysis")
+
         # Calculate risk score and decision
         risk_score = self._calculate_risk_score(threats, context_score)
         decision = self._make_decision(threats, risk_score)
         explanation = self._generate_explanation(threats, decision)
 
         # Layer 3: Trust-aware source scoring
-        if entry.source_id and entry.source_id in self._doc_trust_scores:
-            trust = self._doc_trust_scores[entry.source_id]
-            if trust < 0.3:
-                # Low-trust source — boost risk proportionally to distrust level
-                boost = int(min(30, (0.3 - trust) / 0.3 * 30))
-                risk_score = min(100, risk_score + boost)
-                layers_used.append("trust_scoring")
-            elif trust >= 0.8 and risk_score < 50:
-                # High-trust source — marginal reduction for borderline content
-                risk_score = max(0, risk_score - 5)
-                layers_used.append("trust_scoring")
-            if "trust_scoring" in layers_used:
-                decision = self._make_decision(threats, risk_score)
-                explanation = self._generate_explanation(threats, decision)
+        with tracer.start_as_current_span("memgar.layer3.trust_scoring") as l3:
+            if entry.source_id and entry.source_id in self._doc_trust_scores:
+                trust = self._doc_trust_scores[entry.source_id]
+                l3.set_attribute("memgar.l3.source_id", entry.source_id)
+                l3.set_attribute("memgar.l3.trust_score", trust)
+                risk_before = risk_score
+                if trust < 0.3:
+                    boost = int(min(30, (0.3 - trust) / 0.3 * 30))
+                    risk_score = min(100, risk_score + boost)
+                    layers_used.append("trust_scoring")
+                elif trust >= 0.8 and risk_score < 50:
+                    risk_score = max(0, risk_score - 5)
+                    layers_used.append("trust_scoring")
+                l3.set_attribute("memgar.l3.risk_delta", risk_score - risk_before)
+                if "trust_scoring" in layers_used:
+                    decision = self._make_decision(threats, risk_score)
+                    explanation = self._generate_explanation(threats, decision)
+            else:
+                l3.set_attribute("memgar.l3.active", False)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 

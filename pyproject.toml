@@ -89,12 +89,16 @@ feed = [
 observability = [
     "prometheus_client>=0.17.0",
 ]
+tracing = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+]
 server = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",
 ]
 all = [
-    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,server]",
+    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,tracing,server]",
 ]
 
 [project.scripts]
