@@ -3686,7 +3686,33 @@ def feed_verify() -> None:
 @click.option("--reload", is_flag=True, help="Enable auto-reload (development only)")
 @click.option("--workers", default=1, show_default=True, type=int,
               help="Number of worker processes")
-def serve(host: str, port: int, rate_limit_rpm: int, reload: bool, workers: int) -> None:
+@click.option(
+    "--api-key",
+    envvar="MEMGAR_SERVER_API_KEY",
+    default=None,
+    help="API key required for /analyze and /scan. Can also use MEMGAR_SERVER_API_KEY.",
+)
+@click.option(
+    "--cors-origin",
+    "cors_origins",
+    multiple=True,
+    help="Allowed CORS origin. Repeat for multiple origins. Default: none.",
+)
+@click.option(
+    "--no-auth",
+    is_flag=True,
+    help="Disable API key auth for local development only.",
+)
+def serve(
+    host: str,
+    port: int,
+    rate_limit_rpm: int,
+    reload: bool,
+    workers: int,
+    api_key: Optional[str],
+    cors_origins: tuple[str, ...],
+    no_auth: bool,
+) -> None:
     """Start the Memgar REST API server (requires memgar[server])."""
     try:
         import uvicorn
@@ -3703,16 +3729,31 @@ def serve(host: str, port: int, rate_limit_rpm: int, reload: bool, workers: int)
         console.print(f"[red]FastAPI not available:[/red] {exc}")
         raise SystemExit(1)
 
+    require_api_key = not no_auth
+    if require_api_key and not api_key and not os.getenv("MEMGAR_SERVER_API_KEYS"):
+        console.print(
+            "[red]Refusing to start without API key auth.[/red]\n"
+            "Set [bold]MEMGAR_SERVER_API_KEY[/bold], pass [bold]--api-key[/bold], "
+            "or use [bold]--no-auth[/bold] for local development only."
+        )
+        raise SystemExit(2)
+
     console.print(
         f"[green]Starting Memgar API server[/green] on "
         f"[bold]http://{host}:{port}[/bold]  "
-        f"(rate limit: {rate_limit_rpm} req/min)"
+        f"(rate limit: {rate_limit_rpm} req/min, "
+        f"auth: {'disabled' if no_auth else 'api-key'})"
     )
     console.print(f"  [dim]Docs:[/dim]   http://{host}:{port}/docs")
     console.print(f"  [dim]Health:[/dim] http://{host}:{port}/health")
     console.print(f"  [dim]Ready:[/dim]  http://{host}:{port}/ready")
 
-    app = create_app(rate_limit_rpm=rate_limit_rpm)
+    app = create_app(
+        rate_limit_rpm=rate_limit_rpm,
+        api_keys=[api_key] if api_key else None,
+        require_api_key=require_api_key,
+        cors_origins=list(cors_origins) if cors_origins else None,
+    )
     uvicorn.run(
         app,
         host=host,

@@ -16,10 +16,12 @@ Requires: fastapi, uvicorn  (pip install 'memgar[server]')
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +113,95 @@ class _RateLimiter:
 
 
 # ---------------------------------------------------------------------------
+# API key authentication helpers
+# ---------------------------------------------------------------------------
+
+_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+def _split_csv(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _load_api_keys(explicit_keys: Optional[Iterable[str]] = None) -> List[str]:
+    """Load server API keys from explicit values or environment."""
+    keys = [str(k).strip() for k in (explicit_keys or []) if str(k).strip()]
+    keys.extend(_split_csv(os.getenv("MEMGAR_SERVER_API_KEYS")))
+    single = os.getenv("MEMGAR_SERVER_API_KEY")
+    if single:
+        keys.append(single.strip())
+
+    # Preserve order while deduplicating.
+    seen: Set[str] = set()
+    unique: List[str] = []
+    for key in keys:
+        if key and key not in seen:
+            unique.append(key)
+            seen.add(key)
+    return unique
+
+
+def _should_require_api_key(require_api_key: Optional[bool]) -> bool:
+    """Resolve auth requirement, defaulting to secure-by-default."""
+    if require_api_key is not None:
+        return bool(require_api_key)
+    env = os.getenv("MEMGAR_SERVER_REQUIRE_API_KEY")
+    if env is None:
+        return True
+    return env.strip().lower() not in _FALSE_VALUES
+
+
+def _extract_request_api_key(
+    request: Any,
+    auth_header: str,
+    allow_bearer_token: bool,
+) -> Optional[str]:
+    header_value = request.headers.get(auth_header)
+    if header_value:
+        return header_value.strip()
+
+    if allow_bearer_token:
+        auth_value = request.headers.get("Authorization", "")
+        scheme, _, token = auth_value.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            return token.strip()
+    return None
+
+
+def _api_key_matches(candidate: Optional[str], valid_keys: Iterable[str]) -> bool:
+    """Constant-time API key comparison."""
+    if not candidate:
+        return False
+    return any(secrets.compare_digest(candidate, key) for key in valid_keys)
+
+
+# ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
 
 def create_app(
     rate_limit_rpm: int = 60,
     cors_origins: Optional[List[str]] = None,
+    api_keys: Optional[List[str]] = None,
+    require_api_key: Optional[bool] = None,
+    auth_header: str = "X-Memgar-API-Key",
+    allow_bearer_token: bool = True,
+    public_paths: Optional[List[str]] = None,
 ) -> Any:
     """Build and return the FastAPI application.
 
     Args:
         rate_limit_rpm: Max requests per minute per IP (default 60).
-        cors_origins: Allowed CORS origins (default ["*"]).
+        cors_origins: Allowed CORS origins. Defaults to MEMGAR_CORS_ORIGINS
+            or [] (no browser origins).
+        api_keys: Valid API keys. Also loaded from MEMGAR_SERVER_API_KEY(S).
+        require_api_key: Require API key auth. Defaults to True unless
+            MEMGAR_SERVER_REQUIRE_API_KEY is set to false/0/no/off.
+        auth_header: Header used for API key auth (default X-Memgar-API-Key).
+        allow_bearer_token: Also accept Authorization: Bearer <key>.
+        public_paths: Paths excluded from auth/rate limits where appropriate.
 
     Returns:
         FastAPI application instance.
@@ -144,7 +223,19 @@ def create_app(
         raise ImportError("pydantic is required: pip install 'memgar[server]'")
 
     if cors_origins is None:
-        cors_origins = ["*"]
+        cors_origins = _split_csv(os.getenv("MEMGAR_CORS_ORIGINS"))
+
+    valid_api_keys = _load_api_keys(api_keys)
+    auth_required = _should_require_api_key(require_api_key)
+    public_path_set = set(public_paths or ["/health", "/ready"])
+
+    if auth_required and not valid_api_keys:
+        raise ValueError(
+            "Memgar server API key auth is required but no key is configured. "
+            "Set MEMGAR_SERVER_API_KEY or MEMGAR_SERVER_API_KEYS, pass "
+            "api_keys=[...], or explicitly call create_app(require_api_key=False) "
+            "for local development only."
+        )
 
     from memgar import __version__
     from memgar.models import MemoryEntry
@@ -183,30 +274,55 @@ def create_app(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_methods=["GET", "POST"],
-        allow_headers=["*"],
+        allow_headers=["Authorization", "Content-Type", auth_header],
     )
+
+    # ------------------------------------------------------------------
+    # API key auth middleware
+    # ------------------------------------------------------------------
+    @app.middleware("http")
+    async def api_key_auth_middleware(request: Request, call_next):
+        if auth_required and request.url.path not in public_path_set:
+            supplied_key = _extract_request_api_key(
+                request=request,
+                auth_header=auth_header,
+                allow_bearer_token=allow_bearer_token,
+            )
+            if not _api_key_matches(supplied_key, valid_api_keys):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Missing or invalid API key"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            request.state.authenticated = True
+            request.state.auth_key_id = str(abs(hash(supplied_key)) % 10_000_000)
+        return await call_next(request)
 
     # ------------------------------------------------------------------
     # Rate-limit middleware
     # ------------------------------------------------------------------
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
-        if request.url.path not in ("/health", "/ready"):
+        if request.url.path not in public_path_set:
             # Honour X-Forwarded-For for proxied deployments (first trusted hop).
             # Fall back to direct connection address and normalise IPv6.
-            forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
-                raw_ip = forwarded_for.split(",")[0].strip()
-            elif request.client:
-                raw_ip = request.client.host
+            auth_key_id = getattr(request.state, "auth_key_id", None)
+            if auth_key_id:
+                client_key = f"api-key:{auth_key_id}"
             else:
-                raw_ip = "unknown"
-            try:
-                import ipaddress
-                client_ip = str(ipaddress.ip_address(raw_ip.strip("[]")))
-            except (ValueError, AttributeError):
-                client_ip = raw_ip
-            if not _limiter.is_allowed(client_ip):
+                forwarded_for = request.headers.get("X-Forwarded-For")
+                if forwarded_for:
+                    raw_ip = forwarded_for.split(",")[0].strip()
+                elif request.client:
+                    raw_ip = request.client.host
+                else:
+                    raw_ip = "unknown"
+                try:
+                    import ipaddress
+                    client_key = str(ipaddress.ip_address(raw_ip.strip("[]")))
+                except (ValueError, AttributeError):
+                    client_key = raw_ip
+            if not _limiter.is_allowed(client_key):
                 return JSONResponse(
                     status_code=429,
                     content={"detail": f"Rate limit exceeded: {rate_limit_rpm} req/min"},

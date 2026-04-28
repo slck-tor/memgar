@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 def _make_client() -> TestClient:
     from memgar.server import create_app
-    return TestClient(create_app(), raise_server_exceptions=True)
+    return TestClient(create_app(require_api_key=False), raise_server_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ class TestHealthEndpoint:
     def test_health_not_rate_limited(self):
         """Health is excluded from rate limiting — 1000 rapid calls must all succeed."""
         from memgar.server import create_app
-        app = create_app(rate_limit_rpm=1)
+        app = create_app(rate_limit_rpm=1, require_api_key=False)
         with TestClient(app) as client:
             for _ in range(10):
                 assert client.get("/health").status_code == 200
@@ -110,6 +110,66 @@ class TestAnalyzeEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# API key auth
+# ---------------------------------------------------------------------------
+
+class TestAPIKeyAuth:
+    def test_create_app_requires_api_key_by_default(self, monkeypatch):
+        from memgar.server import create_app
+
+        monkeypatch.delenv("MEMGAR_SERVER_API_KEY", raising=False)
+        monkeypatch.delenv("MEMGAR_SERVER_API_KEYS", raising=False)
+        monkeypatch.delenv("MEMGAR_SERVER_REQUIRE_API_KEY", raising=False)
+
+        with pytest.raises(ValueError):
+            create_app()
+
+    def test_analyze_requires_api_key_when_enabled(self):
+        from memgar.server import create_app
+
+        app = create_app(api_keys=["secret-test-key"], require_api_key=True)
+        with TestClient(app) as client:
+            r = client.post("/analyze", json={"content": "Hello"})
+
+        assert r.status_code == 401
+
+    def test_analyze_accepts_x_memgar_api_key(self):
+        from memgar.server import create_app
+
+        app = create_app(api_keys=["secret-test-key"], require_api_key=True)
+        with TestClient(app) as client:
+            r = client.post(
+                "/analyze",
+                json={"content": "Hello"},
+                headers={"X-Memgar-API-Key": "secret-test-key"},
+            )
+
+        assert r.status_code == 200
+
+    def test_analyze_accepts_bearer_token(self):
+        from memgar.server import create_app
+
+        app = create_app(api_keys=["secret-test-key"], require_api_key=True)
+        with TestClient(app) as client:
+            r = client.post(
+                "/analyze",
+                json={"content": "Hello"},
+                headers={"Authorization": "Bearer secret-test-key"},
+            )
+
+        assert r.status_code == 200
+
+    def test_health_remains_public_with_auth_enabled(self):
+        from memgar.server import create_app
+
+        app = create_app(api_keys=["secret-test-key"], require_api_key=True)
+        with TestClient(app) as client:
+            r = client.get("/health")
+
+        assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # /scan endpoint
 # ---------------------------------------------------------------------------
 
@@ -161,7 +221,7 @@ class TestScanEndpoint:
 class TestRateLimiter:
     def test_rate_limit_triggers_429(self):
         from memgar.server import create_app
-        app = create_app(rate_limit_rpm=2)
+        app = create_app(rate_limit_rpm=2, require_api_key=False)
         with TestClient(app) as client:
             # First 2 should pass; third must be throttled
             client.post("/analyze", json={"content": "a"})
@@ -172,7 +232,7 @@ class TestRateLimiter:
 
     def test_rate_limit_body_message(self):
         from memgar.server import create_app
-        app = create_app(rate_limit_rpm=1)
+        app = create_app(rate_limit_rpm=1, require_api_key=False)
         with TestClient(app) as client:
             client.post("/analyze", json={"content": "a"})
             r = client.post("/analyze", json={"content": "b"})
