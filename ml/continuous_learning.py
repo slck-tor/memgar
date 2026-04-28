@@ -1344,6 +1344,7 @@ class SmartDetector:
             if os.path.exists(model_path):
                 self._detector = MLSemanticDetector(
                     model_path,
+                    threshold_manager=self._cl.threshold_manager if self._cl is not None else None,
                     threshold_config_path=effective_threshold_config,
                     default_profile=threshold_profile,
                 )

@@ -96,6 +96,15 @@ from memgar.memory_guard import (
 )
 
 # =============================================================================
+# UNIFIED DEFENSE PIPELINE (Always available)
+# =============================================================================
+from memgar.defense_pipeline import (
+    MemgarDefensePipeline,
+    DefensePipelineResult,
+    create_defense_pipeline,
+)
+
+# =============================================================================
 # LAYER 3: TRUST-AWARE RETRIEVAL (Always available)
 # =============================================================================
 from memgar.retriever import (
@@ -902,6 +911,9 @@ __all__ = [
     "MemoryGuard",
     "GuardResult",
     "GuardDecision",
+    "MemgarDefensePipeline",
+    "DefensePipelineResult",
+    "create_defense_pipeline",
     
     # Layer 3: Retrieval
     "TrustAwareRetriever",
