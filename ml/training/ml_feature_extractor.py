@@ -33,7 +33,7 @@ class FeatureVector:
     Complete feature vector for ML classification.
     
     All features normalized to [0.0, 1.0] range.
-    Total: 40 features across 6 categories.
+    Total: 41 features across 6 categories.
     """
     
     # ═══════════════════════════════════════════════════════════
@@ -90,7 +90,7 @@ class FeatureVector:
     instruction_language: float = 0.0     # Direct commands
     
     # ═══════════════════════════════════════════════════════════
-    # CATEGORY 6: TECHNICAL INDICATORS (7 features)
+    # CATEGORY 6: TECHNICAL INDICATORS (8 features)
     # ═══════════════════════════════════════════════════════════
     sql_keywords: float = 0.0             # SQL injection
     script_tags: float = 0.0              # XSS attempts
@@ -99,6 +99,7 @@ class FeatureVector:
     system_commands: float = 0.0          # OS commands
     code_patterns: float = 0.0            # Programming constructs
     path_traversal: float = 0.0           # ../ patterns
+    injection_prefix: float = 0.0         # SYSTEM:/ADMIN:/OVERRIDE: prefix attacks
     
     def to_numpy(self) -> np.ndarray:
         """Convert to numpy array for ML models"""
@@ -123,7 +124,7 @@ class FeatureVector:
             # Technical
             self.sql_keywords, self.script_tags, self.file_operations,
             self.network_operations, self.system_commands, self.code_patterns,
-            self.path_traversal
+            self.path_traversal, self.injection_prefix
         ], dtype=np.float32)
     
     def get_feature_names(self) -> List[str]:
@@ -196,6 +197,11 @@ class MLFeatureExtractor:
                     'unrestricted mode', 'jailbreak',
                     'your guidelines', 'your rules', 'your training', 'your restrictions',
                     'all guidelines', 'all rules', 'all restrictions',
+                    # Explicit security filter bypass patterns
+                    'security filters', 'content filters', 'safety filters',
+                    'all filters', 'all checks', 'all security', 'guardrails',
+                    'content policy', 'safety policy', 'content moderation',
+                    'all protections', 'all safeguards', 'all controls',
                 ]
             },
             
@@ -315,7 +321,12 @@ class MLFeatureExtractor:
                 'policy requires', 'policy mandates', 'policy states',
                 'regulation requires', 'regulation mandates', 'law requires',
                 'compliance requires', 'compliance mandates', 'audit requires',
-                'security requires', 'it requires', 'legal requires'
+                'security requires', 'it requires', 'legal requires',
+                # Prompt injection system prefix patterns
+                'system:', '[system]', 'system prompt:', 'system message:',
+                'system command:', 'system directive:', 'system override',
+                'admin override', 'root access', 'override:', '[override]',
+                'system alert:', 'priority override', 'admin command:',
             ],
             
             'urgency': [
@@ -457,7 +468,7 @@ class MLFeatureExtractor:
             text: Input text to analyze
         
         Returns:
-            FeatureVector with all 40 features
+            FeatureVector with all 41 features
         
         Handles:
             - Empty/None inputs
@@ -555,7 +566,15 @@ class MLFeatureExtractor:
         for indicator_name, keywords in self.technical_indicators.items():
             score = self._calculate_keyword_match(text_lower, keywords)
             setattr(features, indicator_name, score)
-        
+
+        # Injection prefix detection: SYSTEM:/ADMIN:/OVERRIDE: at start of message
+        import re as _re
+        _injection_re = _re.compile(
+            r'^\s*(\[?(system|admin|root|override|priority|directive)\]?\s*:)',
+            _re.IGNORECASE,
+        )
+        features.injection_prefix = 1.0 if _injection_re.search(text) else 0.0
+
         # Track extraction time
         extraction_time = (time.time() - start_time) * 1000
         self.extraction_times.append(extraction_time)
