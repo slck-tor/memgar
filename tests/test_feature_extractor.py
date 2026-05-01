@@ -7,7 +7,7 @@ ML-ready numeric features.
 
 Tests cover:
 - Feature extraction accuracy
-- Feature count (40 features)
+- Feature count (41 features)
 - Feature value ranges
 - Edge cases
 - Performance
@@ -57,11 +57,11 @@ class TestFeatureExtraction:
             pytest.skip("ML dependencies not installed")
     
     def test_feature_count(self, extractor):
-        """Test that exactly 40 features are extracted"""
+        """Test that exactly 41 features are extracted"""
         text = "This is a test sentence for feature extraction"
         features = extractor.extract(text)
         
-        assert len(features) == 40, f"Expected 40 features, got {len(features)}"
+        assert len(features) == 41, f"Expected 41 features, got {len(features)}"
     
     def test_feature_types(self, extractor):
         """Test that all features are numeric"""
@@ -94,7 +94,7 @@ class TestFeatureExtraction:
         
         for text in inputs:
             features = extractor.extract(text)
-            assert len(features) == 40, f"Wrong feature count for: {text[:30]}"
+            assert len(features) == 41, f"Wrong feature count for: {text[:30]}"
             assert all(isinstance(f, (int, float)) for f in features)
 
 
@@ -146,21 +146,21 @@ class TestFeatureExtractorEdgeCases:
         """Test extraction from empty string"""
         features = extractor.extract("")
         
-        assert len(features) == 40
+        assert len(features) == 41
         assert all(isinstance(f, (int, float)) for f in features)
     
     def test_single_character(self, extractor):
         """Test extraction from single character"""
         features = extractor.extract("a")
         
-        assert len(features) == 40
+        assert len(features) == 41
         assert all(isinstance(f, (int, float)) for f in features)
     
     def test_whitespace_only(self, extractor):
         """Test extraction from whitespace"""
         features = extractor.extract("   \t\n  ")
         
-        assert len(features) == 40
+        assert len(features) == 41
         assert all(isinstance(f, (int, float)) for f in features)
     
     def test_very_long_input(self, extractor):
@@ -168,7 +168,7 @@ class TestFeatureExtractorEdgeCases:
         text = "Long text " * 10000  # ~100KB
         features = extractor.extract(text)
         
-        assert len(features) == 40
+        assert len(features) == 41
         assert all(isinstance(f, (int, float)) for f in features)
     
     def test_special_characters(self, extractor):
@@ -183,7 +183,7 @@ class TestFeatureExtractorEdgeCases:
         for text in special_texts:
             try:
                 features = extractor.extract(text)
-                assert len(features) == 40
+                assert len(features) == 41
             except Exception as e:
                 pytest.fail(f"Failed on special chars '{text}': {e}")
 
