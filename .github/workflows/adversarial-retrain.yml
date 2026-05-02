@@ -1,0 +1,179 @@
+name: Adversarial Retrain Loop
+
+# Runs:
+#  - Weekly on main: full online retrain with LLM-generated variants
+#  - Manual trigger: for on-demand retrains after major attack pattern discovery
+#
+# What it does:
+#  1. Sample N seed attacks from training_data.json
+#  2. Generate adversarial variants (online: Claude API, offline: template mutations)
+#  3. Curate variants (TF-IDF dedup, cluster-cap to 3 per cluster)
+#  4. Inject into continuous-learning storage
+#  5. Retrain model with new variants + existing data
+#  6. Enforce quality gate (precision ≥ 0.94, recall ≥ 0.94, P95 ≤ 25ms)
+#  7. Commit updated model artifact to main if gate passes
+
+on:
+  schedule:
+    # Every Sunday at 02:00 UTC
+    - cron: "0 2 * * 0"
+
+  workflow_dispatch:
+    inputs:
+      n_seeds:
+        description: "Number of seed attacks to sample"
+        default: "20"
+        required: false
+      n_variants:
+        description: "Variants per seed"
+        default: "8"
+        required: false
+      use_llm:
+        description: "Use LLM (requires ANTHROPIC_API_KEY secret)"
+        default: "true"
+        type: boolean
+        required: false
+      dry_run:
+        description: "Dry run (generate but do not retrain or commit)"
+        default: "false"
+        type: boolean
+        required: false
+
+jobs:
+  adversarial-retrain:
+    name: Adversarial retrain (${{ github.event_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write       # Needed to commit updated model artifact
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,adversarial]" numpy scikit-learn
+
+      - name: Rebuild baseline model
+        run: python rebuild_model.py
+
+      # ── ONLINE path: Anthropic API available ─────────────────────────────
+      - name: Generate adversarial variants (online via LLM)
+        if: >-
+          (github.event_name == 'schedule' ||
+           (github.event_name == 'workflow_dispatch' && github.event.inputs.use_llm == 'true'))
+          && secrets.ANTHROPIC_API_KEY != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          N_SEEDS="${{ github.event.inputs.n_seeds || '20' }}"
+          N_VARIANTS="${{ github.event.inputs.n_variants || '8' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          FLAGS="--n-seeds ${N_SEEDS} --n-variants ${N_VARIANTS}"
+          if [ "${DRY_RUN}" = "true" ]; then FLAGS="${FLAGS} --dry-run"; fi
+
+          python scripts/red_team_run.py ${FLAGS} \
+            | tee red_team_report_online.json
+
+          echo "RETRAIN_MODE=online" >> $GITHUB_ENV
+
+      # ── OFFLINE path: fallback when no API key ───────────────────────────
+      - name: Generate adversarial variants (offline template mutations)
+        if: >-
+          env.RETRAIN_MODE != 'online'
+        run: |
+          N_SEEDS="${{ github.event.inputs.n_seeds || '20' }}"
+          N_VARIANTS="${{ github.event.inputs.n_variants || '8' }}"
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          FLAGS="--n-seeds ${N_SEEDS} --n-variants ${N_VARIANTS} --offline"
+          if [ "${DRY_RUN}" = "true" ]; then FLAGS="${FLAGS} --dry-run"; fi
+
+          python scripts/red_team_run.py ${FLAGS} \
+            | tee red_team_report_offline.json
+
+          echo "RETRAIN_MODE=offline" >> $GITHUB_ENV
+
+      # ── Quality gate after retrain ────────────────────────────────────────
+      - name: Verify model quality gate
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          python -m ml.quality_gate \
+            --model-path ml/artifacts/gradient_boost_model.pkl \
+            --training-data-path ml/data/training_data.json \
+            --min-precision 0.94 \
+            --min-recall 0.94 \
+            --max-p95-latency-ms 25 \
+            --max-avg-latency-ms 10 \
+            --output-json ml/artifacts/quality_gate_report_adversarial.json
+
+      # ── Run the full test suite to check nothing regressed ───────────────
+      - name: Run full test suite
+        if: github.event.inputs.dry_run != 'true'
+        run: pytest -q
+
+      # ── Commit updated model artifact ─────────────────────────────────────
+      - name: Commit updated model artifact
+        if: >-
+          github.event.inputs.dry_run != 'true' &&
+          github.ref == 'refs/heads/main'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ml/artifacts/gradient_boost_model.pkl
+          git add ml/artifacts/quality_gate_report_adversarial.json || true
+          if git diff --staged --quiet; then
+            echo "No artifact changes to commit"
+          else
+            git commit -m "chore(ml): adversarial retrain [mode=${{ env.RETRAIN_MODE }}] [skip ci]"
+            git push origin main
+          fi
+
+      # ── Upload all reports ────────────────────────────────────────────────
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adversarial-retrain-${{ github.run_id }}
+          path: |
+            red_team_report_online.json
+            red_team_report_offline.json
+            ml/artifacts/quality_gate_report_adversarial.json
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Adversarial Retrain Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mode | ${{ env.RETRAIN_MODE }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dry run | ${{ github.event.inputs.dry_run || 'false' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Seeds | ${{ github.event.inputs.n_seeds || '20' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Variants/seed | ${{ github.event.inputs.n_variants || '8' }} |" >> $GITHUB_STEP_SUMMARY
+
+  notify-on-failure:
+    name: Slack notification on retrain failure
+    runs-on: ubuntu-latest
+    needs: adversarial-retrain
+    if: failure() && github.event_name == 'schedule'
+
+    steps:
+      - name: Log failure
+        run: |
+          echo "::error::Scheduled adversarial retrain failed."
+          echo "Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # Add Slack/PagerDuty webhook call here when available:
+          # curl -X POST ${{ secrets.SLACK_WEBHOOK }} -d '{"text":"⚠️ memgar adversarial retrain failed"}'

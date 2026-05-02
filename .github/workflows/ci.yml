@@ -126,11 +126,11 @@ jobs:
           memgar feed status || true
           memgar feed verify || true
 
-  red-team-dry-run:
-    name: Red-team dry run (offline)
+  red-team-ci:
+    name: Adversarial red-team (offline, CI gate)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-    timeout-minutes: 10
+    needs: ml-matrix-gate
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -150,5 +150,31 @@ jobs:
       - name: Rebuild model artifact
         run: python rebuild_model.py
 
-      - name: Run red-team dry run (offline)
-        run: python scripts/red_team_run.py --n-seeds 5 --n-variants 3 --dry-run --offline
+      - name: Generate adversarial variants (offline)
+        run: |
+          python scripts/red_team_run.py \
+            --n-seeds 10 \
+            --n-variants 5 \
+            --dry-run \
+            --offline \
+            | tee red_team_report.json
+
+      - name: Verify model still passes quality gate post red-team
+        run: |
+          python -m ml.quality_gate \
+            --model-path ml/artifacts/gradient_boost_model.pkl \
+            --training-data-path ml/data/training_data.json \
+            --min-precision 0.94 \
+            --min-recall 0.94 \
+            --max-p95-latency-ms 25 \
+            --max-avg-latency-ms 10 \
+            --output-json ml/artifacts/quality_gate_report_redteam.json
+
+      - name: Upload red-team report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: red-team-report-${{ github.sha }}
+          path: |
+            red_team_report.json
+            ml/artifacts/quality_gate_report_redteam.json
