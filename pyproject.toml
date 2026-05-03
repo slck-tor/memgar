@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "memgar"
-version = "0.5.3"
+version = "0.5.6"
 description = "AI Agent Memory Security — Detect and prevent memory poisoning, DoW attacks, and forensic analysis for AI agents"
 readme = "README.md"
 license = "MIT"
@@ -48,6 +48,11 @@ dev = [
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "networkx>=3.0",
+    "prometheus_client>=0.17.0",
+]
+graph = [
+    "networkx>=3.0",
 ]
 semantic = [
     "sentence-transformers>=2.2.0",
@@ -98,7 +103,7 @@ server = [
     "uvicorn[standard]>=0.23.0",
 ]
 all = [
-    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,tracing,server]",
+    "memgar[dev,semantic,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,tracing,server,graph]",
 ]
 
 [project.scripts]

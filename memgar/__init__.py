@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-__version__ = "0.5.16"
+__version__ = "0.5.6"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
