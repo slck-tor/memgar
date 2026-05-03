@@ -14,6 +14,17 @@ Attack vectors:
 
 import pytest
 
+try:
+    import networkx  # noqa: F401
+    _NETWORKX_AVAILABLE = True
+except ImportError:
+    _NETWORKX_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _NETWORKX_AVAILABLE,
+    reason="networkx not installed — pip install 'memgar[graph]'",
+)
+
 from memgar.memory_graph import (
     MemoryGraph,
     MemoryNode,
