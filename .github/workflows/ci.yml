@@ -84,6 +84,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,graph]" numpy scikit-learn
 
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable || true
+
       - name: Rebuild model artifact
         run: python rebuild_model.py
 
