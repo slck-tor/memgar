@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "memgar"
-version = "0.5.3"
+version = "0.5.6"
 description = "AI Agent Memory Security — Detect and prevent memory poisoning, DoW attacks, and forensic analysis for AI agents"
 readme = "README.md"
 license = "MIT"
