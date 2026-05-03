@@ -577,3 +577,279 @@ class TestPublicAPI:
             agent_id="agent-42",
         )
         assert hunter._agent_id == "agent-42"
+
+
+# ---------------------------------------------------------------------------
+# 10. Factory constructors
+# ---------------------------------------------------------------------------
+
+class TestFactoryConstructors:
+
+    def test_from_list_basic(self):
+        hunter = MemoryHunter.from_list([ATTACK_TEXT, CLEAN_TEXT])
+        stats = hunter.scan_now()
+        assert stats.total_scanned + stats.entries_skipped >= 1
+
+    def test_from_list_detects_attack(self):
+        hunter = MemoryHunter.from_list([ATTACK_TEXT])
+        stats = hunter.scan_now()
+        assert stats.threats_found >= 1
+
+    def test_from_list_empty_strings_skipped(self):
+        hunter = MemoryHunter.from_list(["", "  ", CLEAN_TEXT])
+        stats = hunter.scan_now()
+        assert stats.total_scanned == 1  # only CLEAN_TEXT
+
+    def test_from_list_mutations_reflected(self):
+        memories = [CLEAN_TEXT]
+        hunter = MemoryHunter.from_list(memories)
+        hunter.scan_now()
+        assert hunter.stats().scan_cycles == 1
+
+        memories.append(ATTACK_TEXT)
+        hunter._scan_cache.clear()  # reset cache so all entries are re-scanned
+        hunter.scan_now()
+        # Second cycle sees 2 entries; cumulative total = 1 + 2 = 3
+        assert hunter.stats().scan_cycles == 2
+        assert hunter.stats().total_scanned >= 2
+        assert hunter.stats().threats_found >= 1
+
+    def test_from_jsonl_basic(self, tmp_path):
+        import json
+        path = tmp_path / "mem.jsonl"
+        path.write_text(
+            json.dumps({"content": ATTACK_TEXT, "id": "j1"}) + "\n" +
+            json.dumps({"content": CLEAN_TEXT, "id": "j2"}) + "\n"
+        )
+        hunter = MemoryHunter.from_jsonl(str(path))
+        stats = hunter.scan_now()
+        assert stats.threats_found >= 1
+        assert stats.total_scanned >= 1
+
+    def test_from_jsonl_custom_column(self, tmp_path):
+        import json
+        path = tmp_path / "mem2.jsonl"
+        path.write_text(json.dumps({"text": ATTACK_TEXT}) + "\n")
+        hunter = MemoryHunter.from_jsonl(str(path), column="text")
+        stats = hunter.scan_now()
+        assert stats.threats_found >= 1
+
+    def test_from_jsonl_missing_file_returns_empty(self, tmp_path):
+        hunter = MemoryHunter.from_jsonl(str(tmp_path / "nonexistent.jsonl"))
+        stats = hunter.scan_now()
+        assert stats.total_scanned == 0
+
+    def test_from_jsonl_malformed_lines_skipped(self, tmp_path):
+        path = tmp_path / "bad.jsonl"
+        path.write_text('{"content": "good"}\nNOT JSON\n{"content": "also good"}\n')
+        hunter = MemoryHunter.from_jsonl(str(path))
+        stats = hunter.scan_now()
+        assert stats.total_scanned == 2
+
+    def test_from_sqlite_basic(self, tmp_path):
+        import sqlite3
+        db = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY, content TEXT)")
+        conn.execute("INSERT INTO memories VALUES (1, ?)", (ATTACK_TEXT,))
+        conn.execute("INSERT INTO memories VALUES (2, ?)", (CLEAN_TEXT,))
+        conn.commit()
+        conn.close()
+
+        hunter = MemoryHunter.from_sqlite(str(db), table="memories", column="content")
+        stats = hunter.scan_now()
+        assert stats.total_scanned >= 1
+        assert stats.threats_found >= 1
+
+    def test_from_sqlite_custom_where(self, tmp_path):
+        import sqlite3
+        db = tmp_path / "test2.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE m (id INTEGER, content TEXT, active INTEGER)")
+        conn.execute("INSERT INTO m VALUES (1, ?, 1)", (ATTACK_TEXT,))
+        conn.execute("INSERT INTO m VALUES (2, ?, 0)", (ATTACK_TEXT,))
+        conn.commit()
+        conn.close()
+
+        hunter = MemoryHunter.from_sqlite(
+            str(db), table="m", column="content", where="active=1"
+        )
+        stats = hunter.scan_now()
+        assert stats.total_scanned == 1
+
+    def test_from_sqlite_missing_db_returns_empty(self):
+        hunter = MemoryHunter.from_sqlite("/nonexistent/path/db.sqlite")
+        stats = hunter.scan_now()
+        assert stats.total_scanned == 0
+
+    def test_from_sqlite_uses_id_as_source_id(self, tmp_path):
+        import sqlite3
+        db = tmp_path / "ids.db"
+        conn = sqlite3.connect(str(db))
+        conn.execute("CREATE TABLE m (id TEXT, content TEXT)")
+        conn.execute("INSERT INTO m VALUES ('my-id-42', ?)", (CLEAN_TEXT,))
+        conn.commit()
+        conn.close()
+
+        entries_seen = []
+        def provider():
+            import sqlite3 as _sq
+            c = _sq.connect(str(db))
+            rows = c.execute("SELECT content, id FROM m").fetchall()
+            c.close()
+            return [MemoryEntry(content=r[0], source_id=r[1]) for r in rows]
+
+        hunter = MemoryHunter(memory_provider=provider)
+        hunter.scan_now()
+        assert "my-id-42" in hunter._scan_cache
+
+
+# ---------------------------------------------------------------------------
+# 11. scan_now()
+# ---------------------------------------------------------------------------
+
+class TestScanNow:
+
+    def test_scan_now_returns_stats(self):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        stats = hunter.scan_now()
+        assert isinstance(stats, HunterStats)
+
+    def test_scan_now_increments_cycles(self):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        hunter.scan_now()
+        hunter.scan_now()
+        assert hunter.stats().scan_cycles == 2
+
+    def test_scan_now_works_while_running(self):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        hunter.start()
+        stats = hunter.scan_now()  # should not deadlock
+        assert stats.scan_cycles >= 1
+        hunter.stop(timeout=2.0)
+
+    def test_scan_now_detects_threat_immediately(self):
+        hunter = MemoryHunter.from_list([ATTACK_TEXT])
+        stats = hunter.scan_now()
+        assert stats.threats_found >= 1
+
+
+# ---------------------------------------------------------------------------
+# 12. on_threat callback
+# ---------------------------------------------------------------------------
+
+class TestOnThreatCallback:
+
+    def test_on_threat_called_for_attack(self):
+        found = []
+        hunter = MemoryHunter.from_list([ATTACK_TEXT], on_threat=lambda e, r: found.append(e))
+        hunter.scan_now()
+        assert len(found) >= 1
+
+    def test_on_threat_not_called_for_clean(self):
+        found = []
+        hunter = MemoryHunter.from_list([CLEAN_TEXT], on_threat=lambda e, r: found.append(e))
+        hunter.scan_now()
+        assert found == []
+
+    def test_on_threat_receives_entry_and_result(self):
+        calls = []
+        def cb(entry, result):
+            calls.append((entry, result))
+
+        hunter = MemoryHunter.from_list([ATTACK_TEXT], on_threat=cb)
+        hunter.scan_now()
+        assert len(calls) >= 1
+        entry, result = calls[0]
+        assert hasattr(entry, "content")
+        assert hasattr(result, "risk_score")
+
+    def test_on_threat_exception_does_not_crash(self):
+        def bad_cb(e, r):
+            raise RuntimeError("callback error")
+
+        hunter = MemoryHunter.from_list([ATTACK_TEXT], on_threat=bad_cb)
+        hunter.scan_now()  # must not raise
+
+    def test_on_threat_set_after_init(self):
+        found = []
+        hunter = MemoryHunter.from_list([ATTACK_TEXT])
+        hunter.on_threat = lambda e, r: found.append(e)
+        hunter.scan_now()
+        assert len(found) >= 1
+
+    def test_start_hunter_passes_on_threat(self):
+        from memgar import Analyzer
+        from memgar.hunter import start_hunter
+        from memgar.config import HunterConfig
+
+        found = []
+        a = Analyzer(use_llm=False)
+        cfg = HunterConfig(scan_interval_seconds=9999)
+        hunter = start_hunter(a, config=cfg, on_threat=lambda e, r: found.append(r.risk_score))
+        hunter._run_scan_cycle()
+        hunter.stop(timeout=2.0)
+        assert hunter.on_threat is not None
+
+
+# ---------------------------------------------------------------------------
+# 13. Context manager
+# ---------------------------------------------------------------------------
+
+class TestContextManager:
+
+    def test_context_manager_starts_and_stops(self):
+        with MemoryHunter.from_list([CLEAN_TEXT]) as hunter:
+            assert hunter.is_running()
+        assert not hunter.is_running()
+
+    def test_context_manager_stops_on_exception(self):
+        try:
+            with MemoryHunter.from_list([CLEAN_TEXT]) as hunter:
+                running_inside = hunter.is_running()
+                raise ValueError("test error")
+        except ValueError:
+            pass
+        assert running_inside
+        assert not hunter.is_running()
+
+    def test_start_returns_self_for_chaining(self):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        result = hunter.start()
+        assert result is hunter
+        hunter.stop(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
+# 14. report()
+# ---------------------------------------------------------------------------
+
+class TestReport:
+
+    def test_report_does_not_raise(self, capsys):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        hunter.scan_now()
+        hunter.report()
+        out = capsys.readouterr().out
+        assert "MemoryHunter" in out
+
+    def test_report_shows_running_status(self, capsys):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        hunter.start()
+        hunter.report()
+        hunter.stop(timeout=2.0)
+        out = capsys.readouterr().out
+        assert "RUNNING" in out
+
+    def test_report_shows_stopped_status(self, capsys):
+        hunter = MemoryHunter.from_list([CLEAN_TEXT])
+        hunter.report()
+        out = capsys.readouterr().out
+        assert "STOPPED" in out
+
+    def test_report_shows_threats_found(self, capsys):
+        hunter = MemoryHunter.from_list([ATTACK_TEXT])
+        hunter.scan_now()
+        hunter.report()
+        out = capsys.readouterr().out
+        assert "Threats found" in out
