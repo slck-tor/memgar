@@ -299,4 +299,42 @@ def _severity(risk_score: int) -> str:
     return "low"
 
 
-__all__ = ["MemoryHunter", "HunterStats"]
+def start_hunter(
+    analyzer: "Analyzer",
+    config: Optional[HunterConfig] = None,
+    siem_router: Optional["SIEMRouter"] = None,
+    agent_id: Optional[str] = None,
+) -> "MemoryHunter":
+    """
+    Convenience factory: attach a MemoryStore to an existing Analyzer and
+    start a MemoryHunter that scans all entries the Analyzer has seen.
+
+    Usage:
+        from memgar import Analyzer
+        from memgar.hunter import start_hunter
+
+        analyzer = Analyzer(use_llm=False)
+        hunter = start_hunter(analyzer)      # auto-starts in background
+
+        # From this point on, every analyze() call is captured.
+        # Hunter re-evaluates all entries every 60s with the latest patterns.
+
+        hunter.stop()
+    """
+    from memgar.memory_store import MemoryStore
+
+    if analyzer._memory_store is None:
+        analyzer._memory_store = MemoryStore()
+
+    hunter = MemoryHunter(
+        memory_provider=analyzer._memory_store.get_entries,
+        analyzer=analyzer,
+        config=config or HunterConfig(),
+        siem_router=siem_router,
+        agent_id=agent_id,
+    )
+    hunter.start()
+    return hunter
+
+
+__all__ = ["MemoryHunter", "HunterStats", "start_hunter"]
