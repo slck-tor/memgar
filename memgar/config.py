@@ -333,6 +333,17 @@ class ObservabilityConfig:
 
 
 @dataclass
+class HunterConfig:
+    """Active hunter mode — continuous background scanning of memory stores."""
+
+    enabled: bool = False
+    scan_interval_seconds: int = 60
+    rescan_clean_after_seconds: int = 3600
+    alert_threshold: float = 0.7
+    max_entries_per_scan: int = 1000
+
+
+@dataclass
 class MemgarConfig:
     """
     Complete Memgar configuration.
@@ -348,6 +359,7 @@ class MemgarConfig:
     cloud: CloudConfig = field(default_factory=CloudConfig)
     feed: FeedConfig = field(default_factory=FeedConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    hunter: HunterConfig = field(default_factory=HunterConfig)
 
     # Logging
     log_level: str = "WARNING"
@@ -548,6 +560,18 @@ def _apply_env_overrides(config: MemgarConfig) -> MemgarConfig:
     if "MEMGAR_FEED_VERIFY_SIGNATURE" in os.environ:
         config.feed.verify_signature = _parse_bool(os.environ["MEMGAR_FEED_VERIFY_SIGNATURE"])
 
+    # Hunter env overrides
+    if "MEMGAR_HUNTER_ENABLED" in os.environ:
+        config.hunter.enabled = _parse_bool(os.environ["MEMGAR_HUNTER_ENABLED"])
+    if "MEMGAR_HUNTER_SCAN_INTERVAL" in os.environ:
+        config.hunter.scan_interval_seconds = _parse_int(os.environ["MEMGAR_HUNTER_SCAN_INTERVAL"], 60)
+    if "MEMGAR_HUNTER_RESCAN_TTL" in os.environ:
+        config.hunter.rescan_clean_after_seconds = _parse_int(os.environ["MEMGAR_HUNTER_RESCAN_TTL"], 3600)
+    if "MEMGAR_HUNTER_ALERT_THRESHOLD" in os.environ:
+        config.hunter.alert_threshold = float(os.environ["MEMGAR_HUNTER_ALERT_THRESHOLD"])
+    if "MEMGAR_HUNTER_MAX_ENTRIES" in os.environ:
+        config.hunter.max_entries_per_scan = _parse_int(os.environ["MEMGAR_HUNTER_MAX_ENTRIES"], 1000)
+
     # Observability env overrides
     if "MEMGAR_OBSERVABILITY_ENABLED" in os.environ:
         config.observability.enabled = _parse_bool(os.environ["MEMGAR_OBSERVABILITY_ENABLED"])
@@ -644,6 +668,17 @@ def _dict_to_config(data: Dict[str, Any]) -> MemgarConfig:
             max_age_days=fd.get("max_age_days", 7),
             github_repo=fd.get("github_repo", "slcxtor/memgar"),
             verify_signature=fd.get("verify_signature", True),
+        )
+
+    # Hunter config
+    if "hunter" in data:
+        hd = data["hunter"]
+        config.hunter = HunterConfig(
+            enabled=hd.get("enabled", False),
+            scan_interval_seconds=hd.get("scan_interval_seconds", 60),
+            rescan_clean_after_seconds=hd.get("rescan_clean_after_seconds", 3600),
+            alert_threshold=hd.get("alert_threshold", 0.7),
+            max_entries_per_scan=hd.get("max_entries_per_scan", 1000),
         )
 
     # Observability config

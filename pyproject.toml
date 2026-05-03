@@ -145,8 +145,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not slow'"
 asyncio_mode = "auto"
+markers = [
+    "slow: full throughput/load benchmarks (run with: pytest -m slow)",
+]
 
 [tool.coverage.run]
 source = ["memgar"]

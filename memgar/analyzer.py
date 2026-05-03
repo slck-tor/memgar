@@ -945,10 +945,11 @@ class Analyzer:
         use_sliding_window: bool = True,
         window_size: int = 1000,
         window_overlap: int = 200,
+        memory_store: Any = None,
     ) -> None:
         """
         Initialize the analyzer.
-        
+
         Args:
             use_llm: Enable LLM-based semantic analysis (Layer 2)
             api_key: API key for cloud features
@@ -958,6 +959,7 @@ class Analyzer:
             use_sliding_window: Enable sliding window for long content analysis
             window_size: Size of each analysis window (chars)
             window_overlap: Overlap between windows to catch split payloads
+            memory_store: Optional MemoryStore for hunter retroactive scanning
         """
         self.use_llm = use_llm
         self.api_key = api_key
@@ -983,6 +985,8 @@ class Analyzer:
         self._baselines: dict[str, Any] = {}
         # Production feedback — set None so hasattr race in threaded analyze() is avoided
         self._storage_manager: Any = None
+        # Optional MemoryStore for hunter retroactive scanning
+        self._memory_store: Any = memory_store
     
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
@@ -1103,6 +1107,13 @@ class Analyzer:
             ))
         except Exception:
             pass
+
+        # Feed MemoryStore for retroactive hunter scanning (if attached)
+        if self._memory_store is not None:
+            try:
+                self._memory_store.add(entry)
+            except Exception:
+                pass
 
         return result
 
