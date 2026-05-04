@@ -66,6 +66,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+
+class _NumpyUnpickler(pickle.Unpickler):
+    """Allowlist-based unpickler: builtins + numpy only (prevents RCE)."""
+    _SAFE_ROOTS = {"builtins", "numpy", "numpy.core", "numpy._core", "numpy.dtypes", "collections"}
+
+    def find_class(self, module: str, name: str):
+        root = module.split(".")[0]
+        if root not in ("builtins", "numpy", "collections"):
+            raise pickle.UnpicklingError(f"Forbidden pickle class: {module}.{name}")
+        return super().find_class(module, name)
+
 # ---------------------------------------------------------------------------
 # Optional dependency guards
 # ---------------------------------------------------------------------------
@@ -191,7 +202,7 @@ class SemanticGuard:
             return None
 
         # Cache lookup
-        key = hashlib.md5(text.encode("utf-8")).hexdigest()
+        key = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if self.cache_embeddings and key in self._embedding_cache:
             self._stats["cache_hits"] += 1
             return self._embedding_cache[key]
@@ -407,7 +418,7 @@ class SemanticGuard:
     def _load_centroids(self, path: str) -> None:
         """Load centroids from disk."""
         with open(path, "rb") as f:
-            payload = pickle.load(f)
+            payload = _NumpyUnpickler(f).load()
         self._centroids = payload["centroids"].astype(np.float32)
         self._centroid_labels = payload.get("centroid_labels", [])
         self._is_fitted = True

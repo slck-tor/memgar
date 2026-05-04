@@ -565,7 +565,7 @@ class SmartWhitelist:
             content: The content that was checked
             was_false_positive: True if it was incorrectly flagged as unsafe
         """
-        content_hash = hashlib.md5(content.encode()).hexdigest()[:16]
+        content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
         
         with self._lock:
             self._feedback[content_hash].append(was_false_positive)

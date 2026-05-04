@@ -18,6 +18,7 @@ import threading
 import time
 import unicodedata
 import logging
+from difflib import SequenceMatcher
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -545,17 +546,21 @@ _CRITICAL_KEYWORDS_FUZZY = [
 
 
 def _fuzzy_threat_check(content: str) -> bool:
-    """Check if content is within edit-distance of critical attack phrases."""
+    """Check if content is within edit-distance of critical attack phrases.
+
+    Uses SequenceMatcher ratio on a sliding window so common single characters
+    (e.g. letters present in any English text) don't cause false positives.
+    When the content is shorter than the window, the whole content is compared.
+    """
     content_lower = content.lower()
     for phrase in _CRITICAL_KEYWORDS_FUZZY:
-        # sliding window of phrase length ± 20%
         plen = len(phrase)
         window = plen + plen // 5
-        for i in range(max(0, len(content_lower) - window + 1)):
+        n_positions = max(1, len(content_lower) - window + 1)
+        for i in range(n_positions):
             chunk = content_lower[i:i+window]
-            # simple character overlap ratio
-            overlap = sum(1 for c in phrase if c in chunk) / len(phrase)
-            if overlap >= 0.82:
+            ratio = SequenceMatcher(None, phrase, chunk).ratio()
+            if ratio >= 0.82:
                 return True
     return False
 

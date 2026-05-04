@@ -16,12 +16,19 @@ Requires: fastapi, uvicorn  (pip install 'memgar[server]')
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+
+def _get_trusted_proxies() -> Set[str]:
+    """Return the set of trusted proxy IPs from MEMGAR_TRUSTED_PROXIES env var."""
+    raw = os.environ.get("MEMGAR_TRUSTED_PROXIES", "")
+    return {ip.strip() for ip in raw.split(",") if ip.strip()}
 
 # ---------------------------------------------------------------------------
 # Pydantic models (module-level so FastAPI can inspect type annotations)
@@ -30,7 +37,7 @@ try:
     from pydantic import BaseModel, Field
 
     class AnalyzeRequest(BaseModel):
-        content: str = Field(..., description="Memory content to analyse")
+        content: str = Field(..., max_length=100_000, description="Memory content to analyse")
         source_type: str = Field("unknown", description="Source type: chat | email | document | …")
         source_id: Optional[str] = Field(None, description="Source ID for Layer 3 trust scoring")
         agent_id: Optional[str] = Field(None, description="Agent ID for Layer 4 behavioural baseline")
@@ -192,10 +199,13 @@ def create_app(
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
         if request.url.path not in ("/health", "/ready"):
-            # Honour X-Forwarded-For for proxied deployments (first trusted hop).
-            # Fall back to direct connection address and normalise IPv6.
+            # Honour X-Forwarded-For only when the direct connection comes from
+            # a configured trusted proxy (MEMGAR_TRUSTED_PROXIES env var).
+            # Without this guard an attacker can spoof their IP to bypass rate limits.
             forwarded_for = request.headers.get("X-Forwarded-For")
-            if forwarded_for:
+            direct_ip = request.client.host if request.client else None
+            trusted_proxies = _get_trusted_proxies()
+            if forwarded_for and direct_ip and direct_ip in trusted_proxies:
                 raw_ip = forwarded_for.split(",")[0].strip()
             elif request.client:
                 raw_ip = request.client.host

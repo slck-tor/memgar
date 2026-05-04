@@ -44,6 +44,13 @@ from memgar.analyzer import Analyzer
 from memgar.models import AnalysisResult, Decision, MemoryEntry, Severity
 
 
+def _safe_table_name(name: str) -> str:
+    """Validate SQLite table name to prevent SQL injection via identifier injection."""
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name):
+        raise ValueError(f"Unsafe table name: {name!r}")
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Enums & Data Models
 # ---------------------------------------------------------------------------
@@ -702,14 +709,18 @@ class MemoryForensicsEngine:
         index = 0
         for table in tables:
             try:
+                try:
+                    safe_table = _safe_table_name(table)
+                except ValueError:
+                    continue
                 # Get column names safely
-                cursor.execute(f"PRAGMA table_info(\"{table}\")")  # noqa: S608
+                cursor.execute(f"PRAGMA table_info({safe_table})")
                 cols = [row[1] for row in cursor.fetchall()]
                 text_cols = [c for c in cols if any(kw in c.lower() for kw in _CONTENT_KEYS)]
                 if not text_cols:
                     text_cols = cols[:3]  # fallback: first 3 columns
 
-                cursor.execute(f"SELECT * FROM \"{table}\" LIMIT 10000")  # noqa: S608
+                cursor.execute(f"SELECT * FROM {safe_table} LIMIT 10000")  # noqa: S608
                 for row in cursor.fetchall():
                     row_dict = dict(row)
                     content = _extract_content(row_dict)
