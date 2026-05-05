@@ -1,0 +1,153 @@
+name: Apply security hardening patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex-security-hardening-2
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex-security-hardening-2
+      - name: Apply focused hardening edits
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              if old not in s:
+                  raise SystemExit(f'missing pattern in {path}: {old[:80]!r}')
+              p.write_text(s.replace(old, new), encoding='utf-8')
+
+          # 1) server.py: do not trust X-Forwarded-For unless proxies are explicitly trusted.
+          p = Path('memgar/server.py')
+          s = p.read_text(encoding='utf-8')
+          s = s.replace('import secrets\nimport threading', 'import ipaddress\nimport secrets\nimport threading')
+          s = s.replace('    public_paths: Optional[List[str]] = None,\n) -> Any:', '    public_paths: Optional[List[str]] = None,\n    trusted_proxies: Optional[List[str]] = None,\n) -> Any:')
+          s = s.replace('    public_path_set = set(public_paths or ["/health", "/ready"])\n\n    if auth_required', '''    public_path_set = set(public_paths or ["/health", "/ready"])
+    trusted_proxy_values = trusted_proxies or _split_csv(os.getenv("MEMGAR_TRUSTED_PROXIES"))
+    trusted_proxy_networks = []
+    for value in trusted_proxy_values:
+        try:
+            trusted_proxy_networks.append(ipaddress.ip_network(value, strict=False))
+        except ValueError:
+            logger.warning("Ignoring invalid trusted proxy entry: %s", value)
+
+    if auth_required''')
+          old = '''            # Honour X-Forwarded-For for proxied deployments (first trusted hop).
+            # Fall back to direct connection address and normalise IPv6.
+            auth_key_id = getattr(request.state, "auth_key_id", None)
+            if auth_key_id:
+                client_key = f"api-key:{auth_key_id}"
+            else:
+                forwarded_for = request.headers.get("X-Forwarded-For")
+                if forwarded_for:
+                    raw_ip = forwarded_for.split(",")[0].strip()
+                elif request.client:
+                    raw_ip = request.client.host
+                else:
+                    raw_ip = "unknown"
+                try:
+                    import ipaddress
+                    client_key = str(ipaddress.ip_address(raw_ip.strip("[]")))
+                except (ValueError, AttributeError):
+                    client_key = raw_ip'''
+          new = '''            auth_key_id = getattr(request.state, "auth_key_id", None)
+            if auth_key_id:
+                client_key = f"api-key:{auth_key_id}"
+            else:
+                direct_host = request.client.host if request.client else "unknown"
+                raw_ip = direct_host
+                try:
+                    direct_ip = ipaddress.ip_address(str(direct_host).strip("[]"))
+                    trusted_proxy = any(direct_ip in net for net in trusted_proxy_networks)
+                except ValueError:
+                    trusted_proxy = False
+                if trusted_proxy:
+                    forwarded_for = request.headers.get("X-Forwarded-For")
+                    if forwarded_for:
+                        raw_ip = forwarded_for.split(",")[0].strip()
+                try:
+                    client_key = str(ipaddress.ip_address(str(raw_ip).strip("[]")))
+                except (ValueError, AttributeError):
+                    client_key = str(raw_ip or "unknown")'''
+          if old not in s:
+              raise SystemExit('server rate-limit block not found')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+
+          # 2) reporter.py: escape report-controlled HTML values.
+          p = Path('memgar/reporter.py')
+          s = p.read_text(encoding='utf-8')
+          if 'import html\n' not in s:
+              s = s.replace('import json\n', 'import html\nimport json\n')
+          if 'def _html_escape(' not in s:
+              s = s.replace('class ReportGenerator:', 'def _html_escape(value) -> str:\n    return html.escape(str(value), quote=True)\n\n\nclass ReportGenerator:')
+          s = s.replace('<title>{title}</title>', '<title>{_html_escape(title)}</title>')
+          s = s.replace('<h1>{title}</h1>', '<h1>{_html_escape(title)}</h1>')
+          s = s.replace("{f'<span>📁 {source_file}</span>' if source_file else ''}", "{f'<span>Source: {_html_escape(source_file)}</span>' if source_file else ''}")
+          s = s.replace('<td>{threat_info}</td>', '<td>{_html_escape(threat_info)}</td>')
+          s = s.replace('<td>{category}</td>', '<td>{_html_escape(category)}</td>')
+          s = s.replace('<td>{severity}</td>', '<td>{_html_escape(severity)}</td>')
+          s = s.replace("f'<div class=\"category-tag\">{cat}<span>{count}</span></div>'", "f'<div class=\"category-tag\">{_html_escape(cat)}<span>{count}</span></div>'")
+          p.write_text(s, encoding='utf-8')
+
+          # 3) websocket_guard.py: browser-facing protection should require Origin by default.
+          replace('memgar/websocket_guard.py', '        allow_no_origin: bool = True,\n', '        allow_no_origin: bool = False,\n')
+          replace('memgar/websocket_guard.py', '            allow_no_origin=True,\n', '            allow_no_origin=False,\n')
+
+          # 4) pdf_analyzer.py: enforce configured size limit after normalization.
+          p = Path('memgar/multimodal/pdf_analyzer.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '''        # Basic validation
+        if not pdf_bytes.startswith(b'%PDF'):'''
+          insert = '''        if len(pdf_bytes) > self.max_size_bytes:
+            return PDFAnalysisResult(
+                is_safe=False,
+                risk_score=50,
+                threats=[PDFThreat(
+                    threat_type=PDFThreatType.STREAM_INJECTION,
+                    severity="medium",
+                    confidence=0.7,
+                    description=f"PDF exceeds maximum size limit ({self.max_size_bytes} bytes)",
+                )],
+                analysis_time_ms=(time.time() - start_time) * 1000,
+            )
+
+        # Basic validation
+        if not pdf_bytes.startswith(b'%PDF'):'''
+          if insert not in s:
+              s = s.replace(marker, insert)
+          p.write_text(s, encoding='utf-8')
+
+          # 5) hitl.py: escape email/HTTP response HTML and avoid URL-token referrer leakage.
+          p = Path('memgar/hitl.py')
+          s = p.read_text(encoding='utf-8')
+          if 'import html\n' not in s:
+              s = s.replace('import hashlib\n', 'import hashlib\nimport html\n')
+          if 'def _html_escape(' not in s:
+              s = s.replace('def _iso(ts: Optional[float]) -> Optional[str]:', 'def _html_escape(value: Any) -> str:\n    return html.escape(str(value), quote=True)\n\n\ndef _iso(ts: Optional[float]) -> Optional[str]:')
+          s = s.replace('f"<tr><td><b>{k}</b></td><td>{str(v)[:200]}</td></tr>"', 'f"<tr><td><b>{_html_escape(k)}</b></td><td>{_html_escape(str(v)[:200])}</td></tr>"')
+          s = s.replace('<code>{request.action}</code>', '<code>{_html_escape(request.action)}</code>')
+          s = s.replace('<td>{request.session_id}</td>', '<td>{_html_escape(request.session_id)}</td>')
+          s = s.replace('<small>Request ID: {request.request_id}</small>', '<small>Request ID: {_html_escape(request.request_id)}</small>')
+          s = s.replace('<body><h1>{message}</h1><p>You can close this tab.</p></body></html>""".encode()', '<body><h1>{_html_escape(message)}</h1><p>You can close this tab.</p></body></html>""".encode()')
+          s = s.replace('self.send_header("Content-Type", "text/html; charset=utf-8")\n', 'self.send_header("Content-Type", "text/html; charset=utf-8")\n        self.send_header("Referrer-Policy", "no-referrer")\n        self.send_header("Cache-Control", "no-store")\n')
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add memgar/server.py memgar/reporter.py memgar/websocket_guard.py memgar/multimodal/pdf_analyzer.py memgar/hitl.py
+          git commit -m "fix: harden security-sensitive inputs" || exit 0
+          git push origin HEAD:codex-security-hardening-2
