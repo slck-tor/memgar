@@ -13,6 +13,7 @@ Improvements:
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -1029,6 +1030,7 @@ class Analyzer:
         memory_store: Any = None,
         semantic_guard: bool = True,
         context_buffer: bool = True,
+        use_transformer_ml: bool = True,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1085,6 +1087,21 @@ class Analyzer:
 
         # Improvement 4: ContextBuffer for context-split detection
         self._context_buffer: ContextBuffer | None = ContextBuffer() if context_buffer else None
+
+        # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for high-confidence cases)
+        self._transformer: Any = None
+        self._transformer_threshold: float = float(
+            os.environ.get("MEMGAR_TRANSFORMER_THRESHOLD", "0.92")
+        )
+        if use_transformer_ml:
+            try:
+                from ml.inference.transformer_detector import TransformerDetector
+                det = TransformerDetector.load()
+                if det.is_ready:
+                    self._transformer = det
+                    logger.info("Analyzer: transformer backend ready (%s)", det._backend)
+            except Exception:
+                pass
     
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
@@ -1385,7 +1402,35 @@ class Analyzer:
                     threats.append(sem_threat)
                 layers_used.append("semantic_guard")
 
-        # Layer 2: Semantic Analysis (if enabled)
+        # Layer 2-ML: Transformer inference (ONNX, ~5ms — no API call)
+        # High confidence (≥threshold) → add ML-DETECT threat and boost risk score.
+        # Low confidence → pass through; LLM Layer 2 (if enabled) handles borderline.
+        if self._transformer and self._transformer.is_ready:
+            with tracer.start_as_current_span("memgar.layer2ml.transformer") as l2ml:
+                ml_prob, ml_latency = self._transformer.predict(content)
+                l2ml.set_attribute("memgar.l2ml.prob", ml_prob)
+                l2ml.set_attribute("memgar.l2ml.latency_ms", ml_latency)
+                if ml_prob >= self._transformer_threshold:
+                    layers_used.append("transformer_ml")
+                    from memgar.models import ThreatMatch, ThreatCategory as _TC
+                    ml_threat = Threat(
+                        id="ML-DETECT-001",
+                        name="ML Transformer Detection",
+                        description="Fine-tuned DistilBERT flagged this content as an attack",
+                        category=_TC.BEHAVIOR,
+                        severity=Severity.HIGH if ml_prob >= 0.90 else Severity.MEDIUM,
+                        patterns=[],
+                        keywords=[],
+                        examples=[],
+                    )
+                    threats.append(ThreatMatch(
+                        threat=ml_threat,
+                        matched_text=content[:120],
+                        match_type="ml_transformer",
+                        confidence=round(ml_prob, 4),
+                    ))
+
+        # Layer 2: Semantic Analysis via LLM (optional, ~200ms — only for borderline)
         if self.use_llm:
             with tracer.start_as_current_span("memgar.layer2.semantic_analysis") as l2:
                 semantic_threats = self._layer2_semantic_analysis(content, threats)

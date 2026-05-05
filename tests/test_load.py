@@ -76,8 +76,8 @@ ALL_PAYLOADS = BENIGN_PAYLOADS + ATTACK_PAYLOADS
 
 @pytest.fixture(scope="module")
 def analyzer():
-    """Single Analyzer instance, Layer 1 only (use_llm=False)."""
-    return Analyzer(use_llm=False)
+    """Single Analyzer instance, Layer 1 only (use_llm=False, no transformer ML)."""
+    return Analyzer(use_llm=False, use_transformer_ml=False)
 
 
 def _make_entries(count: int) -> List[MemoryEntry]:

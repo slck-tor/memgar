@@ -30,6 +30,18 @@ def _get_trusted_proxies() -> Set[str]:
     raw = os.environ.get("MEMGAR_TRUSTED_PROXIES", "")
     return {ip.strip() for ip in raw.split(",") if ip.strip()}
 
+
+def _get_valid_api_keys() -> Set[str]:
+    """
+    Return the set of valid API keys from MEMGAR_API_KEYS (comma-separated).
+    Empty set means auth is disabled (dev/local mode).
+
+    Example:
+        MEMGAR_API_KEYS=sk-memgar-prod-abc123,sk-memgar-staging-xyz456
+    """
+    raw = os.environ.get("MEMGAR_API_KEYS", "")
+    return {k.strip() for k in raw.split(",") if k.strip()}
+
 # ---------------------------------------------------------------------------
 # Pydantic models (module-level so FastAPI can inspect type annotations)
 # ---------------------------------------------------------------------------
@@ -179,8 +191,10 @@ def create_app(
         title="Memgar API",
         description=(
             "AI agent memory security — multi-layer threat detection REST API.\n\n"
-            "**Layers**: 1 pattern matching · 2 LLM semantic (optional) · "
-            "3 trust scoring · 4 behavioural baseline"
+            "**Layers**: 1 pattern matching · 2 transformer ML · "
+            "3 trust scoring · 4 behavioural baseline\n\n"
+            "**Auth**: set `X-API-Key` header or `?api_key=` query param "
+            "(configure via `MEMGAR_API_KEYS` env var)."
         ),
         version=__version__,
         lifespan=lifespan,
@@ -190,8 +204,31 @@ def create_app(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_methods=["GET", "POST"],
-        allow_headers=["*"],
+        allow_headers=["*", "X-API-Key"],
     )
+
+    # ------------------------------------------------------------------
+    # API key authentication middleware
+    # ------------------------------------------------------------------
+    @app.middleware("http")
+    async def api_key_middleware(request: Request, call_next):
+        # Health/ready endpoints are always public
+        if request.url.path in ("/health", "/ready"):
+            return await call_next(request)
+        valid_keys = _get_valid_api_keys()
+        if valid_keys:
+            api_key = (
+                request.headers.get("X-API-Key")
+                or request.query_params.get("api_key")
+            )
+            if not api_key or api_key not in valid_keys:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or missing API key. Set X-API-Key header."},
+                    headers={"WWW-Authenticate": "ApiKey"},
+                )
+        return await call_next(request)
 
     # ------------------------------------------------------------------
     # Rate-limit middleware
