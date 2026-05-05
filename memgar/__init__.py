@@ -65,6 +65,7 @@ from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_i
 from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig, HunterConfig
 from memgar.hunter import MemoryHunter, HunterStats, start_hunter
 from memgar.memory_store import MemoryStore, PersistentMemoryStore, bulk_scan
+from memgar.memory_integrity import MemoryIntegrityStore, MemorySnapshot, IntegrityViolation
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)

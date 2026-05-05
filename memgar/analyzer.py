@@ -1031,6 +1031,7 @@ class Analyzer:
         semantic_guard: bool = True,
         context_buffer: bool = True,
         use_transformer_ml: bool = True,
+        integrity_store: Any = None,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1087,6 +1088,9 @@ class Analyzer:
 
         # Improvement 4: ContextBuffer for context-split detection
         self._context_buffer: ContextBuffer | None = ContextBuffer() if context_buffer else None
+
+        # Memory Integrity: snapshot + verify + rollback (OWASP Agent Memory Guard)
+        self._integrity_store: Any = integrity_store
 
         # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for high-confidence cases)
         self._transformer: Any = None
@@ -1266,7 +1270,35 @@ class Analyzer:
             except Exception:
                 pass
 
+        # Memory Integrity: auto-snapshot entries that pass analysis
+        if self._integrity_store is not None and result.decision == Decision.ALLOW:
+            try:
+                self._integrity_store.snapshot(entry)
+            except Exception:
+                pass
+
         return result
+
+    def verify_integrity(self, entry: MemoryEntry, entry_id: str | None = None):
+        """Check whether *entry* has been tampered with since its last snapshot.
+
+        Returns an ``IntegrityViolation`` if the content hash differs from the
+        stored baseline, or ``None`` if it is clean (or not yet snapshotted).
+        Requires an ``integrity_store`` to have been passed to ``__init__``.
+        """
+        if self._integrity_store is None:
+            return None
+        return self._integrity_store.verify(entry, entry_id=entry_id)
+
+    def rollback(self, entry_id: str, steps_back: int = 1):
+        """Return the most recent safe snapshot for *entry_id*.
+
+        Use this after ``verify_integrity()`` reports a violation to retrieve
+        the last trusted content.  Returns ``None`` if no snapshot exists.
+        """
+        if self._integrity_store is None:
+            return None
+        return self._integrity_store.rollback(entry_id, steps_back=steps_back)
 
     async def analyze_async(self, entry: MemoryEntry) -> AnalysisResult:
         """Async wrapper for analyze() — safe for use in asyncio-based frameworks.
