@@ -1,0 +1,56 @@
+# memgar.com production reverse proxy
+#
+# Caddy auto-provisions Let's Encrypt certificates. Just point your DNS at
+# this server's IP and it handles HTTPS, HTTP→HTTPS redirect, HSTS, OCSP.
+#
+# DNS records required:
+#   api.memgar.com    A   <server-ip>
+#   metrics.memgar.com A  <server-ip>   (optional — Grafana)
+
+api.memgar.com {
+    encode gzip zstd
+
+    # Upstream API
+    reverse_proxy memgar-api:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        health_uri /health
+        health_interval 30s
+        health_timeout 5s
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    # Rate-limit gate (Caddy doesn't ship one — relies on the FastAPI app's
+    # own rate limiter via slowapi or similar.  Add caddy-ratelimit plugin
+    # for edge-level limits if needed.)
+
+    log {
+        output file /var/log/caddy/api.access.log {
+            roll_size 100mb
+            roll_keep 7
+        }
+        format json
+    }
+}
+
+metrics.memgar.com {
+    # Internal-only — protect with basic auth or restrict by IP.
+    # Replace the basicauth_hash with: caddy hash-password
+    basicauth /* {
+        admin {$GRAFANA_BASIC_AUTH_HASH}
+    }
+    reverse_proxy grafana:3000
+    encode gzip
+}
