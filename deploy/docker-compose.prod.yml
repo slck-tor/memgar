@@ -19,7 +19,8 @@ services:
       GRAFANA_BASIC_AUTH_HASH: ${GRAFANA_BASIC_AUTH_HASH:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data       # certificates (do not delete!)
+      - ./landing:/srv/landing:ro          # marketing landing page
+      - caddy-data:/data                   # certificates (do not delete!)
       - caddy-config:/config
       - caddy-logs:/var/log/caddy
     depends_on:
