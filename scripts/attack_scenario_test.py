@@ -188,7 +188,7 @@ SCENARIOS: List[tuple[str, str, List[AttackPayload]]] = [
                 source_id="user-uploaded-guide",
                 expected_blocked=True,
                 real_world_ref="MINJA bridging technique — creates memory anchor",
-                requires_llm=True,
+                requires_llm=False,
             ),
             AttackPayload(
                 name="Stage 2: Indication prompt",
@@ -216,7 +216,7 @@ SCENARIOS: List[tuple[str, str, List[AttackPayload]]] = [
                 source_id="internal-policy-doc",
                 expected_blocked=True,
                 real_world_ref="MINJA stage 3 — iteratively removes malicious markers",
-                requires_llm=True,
+                requires_llm=False,
             ),
             AttackPayload(
                 name="Healthcare EHR poisoning",
@@ -262,7 +262,7 @@ SCENARIOS: List[tuple[str, str, List[AttackPayload]]] = [
                 source_id="external-email-untrusted",
                 expected_blocked=True,
                 real_world_ref="Unit42 — months-long silent invoice exfiltration via meeting notes",
-                requires_llm=True,
+                requires_llm=False,
             ),
             AttackPayload(
                 name="Calendar credential harvest",
