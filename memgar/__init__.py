@@ -66,6 +66,7 @@ from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig, HunterC
 from memgar.hunter import MemoryHunter, HunterStats, start_hunter
 from memgar.memory_store import MemoryStore, PersistentMemoryStore, bulk_scan
 from memgar.memory_integrity import MemoryIntegrityStore, MemorySnapshot, IntegrityViolation
+from memgar.tenants import TenantStore, Tenant, ApiKey, PLAN_LIMITS
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
