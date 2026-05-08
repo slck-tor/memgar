@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-__version__ = "0.5.16"
+__version__ = "0.5.6"
 __author__ = "Memgar"
 __license__ = "MIT"
 __email__ = "hello@memgar.io"
@@ -62,7 +62,12 @@ from memgar.models import (
 from memgar.analyzer import Analyzer, QuickAnalyzer
 from memgar.scanner import Scanner
 from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id, pattern_stats
-from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig
+from memgar.config import MemgarConfig, FeedConfig, ObservabilityConfig, HunterConfig
+from memgar.hunter import MemoryHunter, HunterStats, start_hunter
+from memgar.memory_store import MemoryStore, PersistentMemoryStore, bulk_scan
+from memgar.memory_integrity import MemoryIntegrityStore, MemorySnapshot, IntegrityViolation
+from memgar.tenants import TenantStore, Tenant, ApiKey, PLAN_LIMITS
+from memgar.brand_bias import BrandBiasDetector, BrandMention, BiasReport, extract_brand_mentions
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -1097,4 +1102,16 @@ __all__ = [
     "DeviationLevel",
     "DeviationReport",
     "BaselineIntegration",
+
+    # Brand Bias Detection (v0.5.7)
+    "BrandBiasDetector",
+    "BrandMention",
+    "BiasReport",
+    "extract_brand_mentions",
+
+    # Multi-tenant key management
+    "TenantStore",
+    "Tenant",
+    "ApiKey",
+    "PLAN_LIMITS",
 ]

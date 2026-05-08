@@ -55,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import pickle
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -64,6 +65,20 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+class _GraphUnpickler(pickle.Unpickler):
+    """Allowlist-based unpickler for MemoryGraph pickle format (prevents RCE)."""
+    _SAFE_ROOTS = {
+        "builtins", "networkx", "numpy", "memgar",
+        "datetime", "collections", "copy_reg", "abc", "_functools",
+    }
+
+    def find_class(self, module: str, name: str):
+        root = module.split(".")[0]
+        if root not in self._SAFE_ROOTS:
+            raise pickle.UnpicklingError(f"Forbidden pickle class: {module}.{name}")
+        return super().find_class(module, name)
 
 # NetworkX is optional — graceful degradation if not installed
 try:
@@ -369,7 +384,7 @@ class MemoryGraph:
 
     def _get_embedding(self, text: str):
         """Get cached or compute embedding for text."""
-        text_hash = hashlib.md5(text.encode()).hexdigest()
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
         if text_hash not in self._embeddings_cache:
             model = self._get_embedding_model()
             if model:
@@ -697,7 +712,7 @@ class MemoryGraph:
                         is_terminal = True
 
                 if is_terminal and len(path) >= 2:
-                    chain_id = hashlib.md5("→".join(path).encode()).hexdigest()[:16]
+                    chain_id = hashlib.sha256("→".join(path).encode()).hexdigest()[:16]
                     threat_types = [
                         self._nodes[nid].threat_type or "unknown" for nid in path if self._nodes[nid].is_threat
                     ]
@@ -935,9 +950,8 @@ class MemoryGraph:
             return graph
 
         elif format == "pickle":
-            import pickle
             with open(path, "rb") as f:
-                gid, created, stats, nodes, g = pickle.load(f)
+                gid, created, stats, nodes, g = _GraphUnpickler(f).load()
             graph = cls(graph_id=gid)
             graph._created_at = created
             graph._stats = stats

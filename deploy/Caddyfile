@@ -1,0 +1,81 @@
+# memgar.com production reverse proxy
+#
+# Caddy auto-provisions Let's Encrypt certificates. Just point your DNS at
+# this server's IP and it handles HTTPS, HTTP→HTTPS redirect, HSTS, OCSP.
+#
+# DNS records required:
+#   memgar.com         A   <server-ip>
+#   www.memgar.com     A   <server-ip>
+#   api.memgar.com     A   <server-ip>
+#   metrics.memgar.com A   <server-ip>   (optional — Grafana)
+
+# ── Apex: marketing landing page ────────────────────────────────────────────
+memgar.com, www.memgar.com {
+    encode gzip zstd
+
+    root * /srv/landing
+    file_server
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        Cache-Control "public, max-age=3600"
+        -Server
+    }
+
+    @assets path *.css *.js *.svg *.png *.jpg *.webp *.woff2
+    header @assets Cache-Control "public, max-age=86400, immutable"
+
+    log {
+        output file /var/log/caddy/landing.access.log {
+            roll_size 100mb
+            roll_keep 7
+        }
+        format json
+    }
+}
+
+# ── API ─────────────────────────────────────────────────────────────────────
+api.memgar.com {
+    encode gzip zstd
+
+    reverse_proxy memgar-api:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        health_uri /health
+        health_interval 30s
+        health_timeout 5s
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/api.access.log {
+            roll_size 100mb
+            roll_keep 7
+        }
+        format json
+    }
+}
+
+# ── Metrics ─────────────────────────────────────────────────────────────────
+metrics.memgar.com {
+    basicauth /* {
+        admin {$GRAFANA_BASIC_AUTH_HASH}
+    }
+    reverse_proxy grafana:3000
+    encode gzip
+}

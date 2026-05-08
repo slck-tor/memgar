@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memgar — AI Agent Memory Security</title>
+<meta name="description" content="Production-grade memory poisoning defense for LLM agents. 4-layer pipeline, <1ms pattern matching, fine-tuned transformer, OWASP Agent Memory Guard compliant.">
+<meta name="theme-color" content="#1c1917">
+
+<meta property="og:title"       content="Memgar — AI Agent Memory Security">
+<meta property="og:description" content="Detect and prevent memory poisoning, prompt-injection, and DoW attacks against LLM-based agents.">
+<meta property="og:type"        content="website">
+<meta property="og:url"         content="https://memgar.com">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+:root {
+    --bg: #faf7f2;
+    --bg-alt: #f3ede3;
+    --ink: #1c1917;
+    --ink-2: #44403c;
+    --ink-3: #78716c;
+    --line: #e7e0d4;
+    --accent: #c2410c;
+    --accent-soft: #fed7aa;
+    --green: #16a34a;
+    --red: #dc2626;
+    --code-bg: #1c1917;
+    --code-ink: #f5f0e6;
+    --code-line: #292524;
+    --radius: 10px;
+    --maxw: 1100px;
+    --shadow: 0 1px 0 rgba(28,25,23,.04), 0 8px 24px -8px rgba(28,25,23,.08);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0c0a09;
+        --bg-alt: #1c1917;
+        --ink: #fafaf9;
+        --ink-2: #d6d3d1;
+        --ink-3: #a8a29e;
+        --line: #292524;
+        --accent: #fb923c;
+        --accent-soft: #431407;
+        --code-bg: #1c1917;
+        --code-ink: #fafaf9;
+        --code-line: #292524;
+        --shadow: 0 1px 0 rgba(0,0,0,.3), 0 8px 24px -8px rgba(0,0,0,.4);
+    }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+code, pre { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; }
+a { color: inherit; text-decoration: none; }
+
+/* Layout */
+.container { max-width: var(--maxw); margin: 0 auto; padding: 0 1.5rem; }
+section { padding: 5rem 0; border-bottom: 1px solid var(--line); }
+
+/* Header */
+header {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(12px);
+    background: rgba(250, 247, 242, .8);
+    border-bottom: 1px solid var(--line);
+}
+@media (prefers-color-scheme: dark) {
+    header { background: rgba(12, 10, 9, .8); }
+}
+.nav {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px;
+    max-width: var(--maxw); margin: 0 auto; padding: 0 1.5rem;
+}
+.logo {
+    font-weight: 700; font-size: 1.05rem;
+    display: flex; align-items: center; gap: .5rem;
+    letter-spacing: -.02em;
+}
+.logo-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+}
+.nav-links { display: flex; gap: 2rem; align-items: center; }
+.nav-links a { color: var(--ink-2); font-size: .92rem; font-weight: 500; transition: color .15s; }
+.nav-links a:hover { color: var(--ink); }
+.btn {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .55rem 1rem;
+    border-radius: var(--radius);
+    font-weight: 500; font-size: .92rem;
+    transition: transform .15s, background .15s, opacity .15s;
+}
+.btn-primary { background: var(--ink); color: var(--bg); }
+.btn-primary:hover { transform: translateY(-1px); opacity: .92; }
+.btn-secondary { background: var(--bg-alt); color: var(--ink); border: 1px solid var(--line); }
+.btn-secondary:hover { background: var(--accent-soft); border-color: var(--accent); }
+@media (max-width: 720px) { .nav-links { display: none; } }
+
+/* Hero */
+.hero { padding: 6rem 0 4rem; text-align: center; position: relative; overflow: hidden; }
+.hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(ellipse at top, var(--accent-soft) 0%, transparent 60%);
+    opacity: .4; z-index: -1;
+}
+.tag {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .35rem .75rem;
+    background: var(--bg-alt);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: .82rem; font-weight: 500;
+    color: var(--ink-2);
+    margin-bottom: 1.5rem;
+}
+.tag .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+h1 {
+    font-size: clamp(2.4rem, 5.5vw, 4rem);
+    font-weight: 700;
+    letter-spacing: -.035em;
+    line-height: 1.05;
+    max-width: 800px; margin: 0 auto 1.25rem;
+}
+h1 em { font-style: normal; color: var(--accent); }
+.hero-sub {
+    font-size: clamp(1.05rem, 2vw, 1.2rem);
+    color: var(--ink-2);
+    max-width: 620px;
+    margin: 0 auto 2rem;
+}
+.hero-cta { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+.hero-cta .btn { padding: .8rem 1.5rem; font-size: 1rem; }
+
+/* Code preview */
+.code-card {
+    margin: 3rem auto 0; max-width: 720px;
+    background: var(--code-bg); color: var(--code-ink);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    text-align: left;
+}
+.code-head {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid var(--code-line);
+    font-size: .82rem;
+    color: #a8a29e;
+}
+.code-head .dot { width: 11px; height: 11px; border-radius: 50%; background: #44403c; }
+.code-head .lang { margin-left: auto; font-family: 'JetBrains Mono', monospace; }
+pre { padding: 1.25rem 1rem; overflow-x: auto; font-size: .87rem; line-height: 1.65; }
+.kw  { color: #fb923c; }
+.str { color: #86efac; }
+.fn  { color: #93c5fd; }
+.com { color: #78716c; font-style: italic; }
+.num { color: #fcd34d; }
+
+/* Stats */
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 2rem;
+    text-align: center;
+}
+.stat-num {
+    font-size: 2.5rem; font-weight: 700;
+    letter-spacing: -.03em;
+    color: var(--accent);
+    font-feature-settings: "tnum";
+}
+.stat-lbl { font-size: .9rem; color: var(--ink-2); margin-top: .25rem; }
+
+/* Section heads */
+.eyebrow {
+    display: inline-block;
+    font-size: .8rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: .75rem;
+}
+h2 {
+    font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+    font-weight: 700;
+    letter-spacing: -.025em;
+    line-height: 1.15;
+    max-width: 720px;
+    margin-bottom: 1rem;
+}
+.section-sub { color: var(--ink-2); max-width: 620px; font-size: 1.05rem; margin-bottom: 3rem; }
+
+/* Layers */
+.layers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+}
+.layer {
+    padding: 1.5rem;
+    background: var(--bg-alt);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    transition: transform .2s, border-color .2s;
+}
+.layer:hover { transform: translateY(-2px); border-color: var(--accent); }
+.layer-num {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace; font-size: .8rem;
+    color: var(--accent);
+    margin-bottom: .5rem;
+}
+.layer h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: .5rem; letter-spacing: -.01em; }
+.layer p { color: var(--ink-2); font-size: .92rem; line-height: 1.5; }
+.layer .lat {
+    display: inline-block;
+    margin-top: .75rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: .78rem;
+    padding: .15rem .5rem;
+    background: var(--bg);
+    border-radius: 4px;
+    color: var(--ink-3);
+}
+
+/* Features */
+.features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+.feat {
+    padding: 1.75rem;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+.feat-icon {
+    width: 38px; height: 38px;
+    background: var(--accent-soft);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 1rem;
+    color: var(--accent);
+}
+.feat h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: .4rem; }
+.feat p { color: var(--ink-2); font-size: .92rem; }
+
+/* Compare */
+.compare {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-top: 2.5rem;
+}
+.compare-card {
+    padding: 1.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-alt);
+}
+.compare-card.highlight {
+    border-color: var(--accent);
+    background: var(--bg);
+    box-shadow: var(--shadow);
+}
+.compare-name {
+    font-size: 1.05rem; font-weight: 600;
+    margin-bottom: 1rem; padding-bottom: .75rem;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+}
+.compare-name .badge {
+    font-size: .7rem; font-weight: 500;
+    padding: .2rem .5rem; border-radius: 4px;
+    background: var(--accent); color: white;
+}
+.compare ul { list-style: none; }
+.compare li {
+    padding: .4rem 0;
+    color: var(--ink-2);
+    font-size: .92rem;
+    display: flex; align-items: center; gap: .5rem;
+}
+.compare li::before { content: ""; flex-shrink: 0; width: 14px; height: 14px; }
+.compare li.yes::before {
+    background: var(--green);
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z'/></svg>") center/contain no-repeat;
+            mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z'/></svg>") center/contain no-repeat;
+}
+.compare li.no::before {
+    background: var(--ink-3);
+    -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z'/></svg>") center/contain no-repeat;
+            mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='black' d='M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z'/></svg>") center/contain no-repeat;
+}
+
+/* Install */
+.install-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    align-items: center;
+}
+@media (max-width: 720px) { .install-grid { grid-template-columns: 1fr; } }
+.install-text { padding-right: 1rem; }
+.install-text h2 { margin-bottom: 1rem; }
+.install-text p { color: var(--ink-2); margin-bottom: 1.5rem; }
+
+/* Footer */
+footer {
+    padding: 3rem 0;
+    color: var(--ink-3);
+    font-size: .9rem;
+    border-bottom: none;
+}
+.footer-grid {
+    display: grid;
+    grid-template-columns: 2fr repeat(3, 1fr);
+    gap: 2rem;
+    margin-bottom: 2rem;
+}
+@media (max-width: 720px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
+.footer-col h4 { color: var(--ink); font-size: .9rem; margin-bottom: .75rem; font-weight: 600; }
+.footer-col a {
+    display: block;
+    color: var(--ink-2);
+    margin-bottom: .35rem;
+    font-size: .9rem;
+    transition: color .15s;
+}
+.footer-col a:hover { color: var(--accent); }
+.footer-bottom {
+    border-top: 1px solid var(--line);
+    padding-top: 1.5rem;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 1rem;
+}
+</style>
+</head>
+<body>
+
+<header>
+    <nav class="nav">
+        <a href="/" class="logo"><span class="logo-dot"></span>memgar</a>
+        <div class="nav-links">
+            <a href="#layers">Architecture</a>
+            <a href="#features">Features</a>
+            <a href="#compare">Compare</a>
+            <a href="https://docs.memgar.io">Docs</a>
+            <a href="https://github.com/slcxtor/memgar" class="btn btn-secondary">GitHub →</a>
+        </div>
+    </nav>
+</header>
+
+<section class="hero">
+    <div class="container">
+        <div class="tag"><span class="dot"></span>v0.5.6 · OWASP Agent Memory Guard compliant</div>
+        <h1>Production-grade <em>memory security</em> for AI agents.</h1>
+        <p class="hero-sub">
+            Detect and block memory poisoning, prompt injection, and denial-of-wallet
+            attacks against LLM agents — with sub-millisecond latency and a fine-tuned
+            transformer that runs on CPU.
+        </p>
+        <div class="hero-cta">
+            <a href="#install" class="btn btn-primary">Get started →</a>
+            <a href="https://github.com/slcxtor/memgar" class="btn btn-secondary">★ Star on GitHub</a>
+        </div>
+
+        <div class="code-card">
+            <div class="code-head">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                <span class="lang">python</span>
+            </div>
+<pre><span class="kw">from</span> memgar <span class="kw">import</span> Analyzer, MemoryEntry
+
+analyzer = <span class="fn">Analyzer</span>(use_llm=<span class="kw">False</span>)
+result   = analyzer.<span class="fn">analyze</span>(
+    <span class="fn">MemoryEntry</span>(content=<span class="str">"ignore all previous instructions"</span>)
+)
+
+<span class="com"># → Decision.BLOCK   risk_score=87   layers=['pattern','transformer_ml']</span>
+<span class="com"># → analysis_time_ms=4.2</span></pre>
+        </div>
+    </div>
+</section>
+
+<section>
+    <div class="container">
+        <div class="stats">
+            <div><div class="stat-num">&lt;1ms</div><div class="stat-lbl">Layer 1 latency</div></div>
+            <div><div class="stat-num">736</div><div class="stat-lbl">Threat patterns</div></div>
+            <div><div class="stat-num">42K</div><div class="stat-lbl">Training examples</div></div>
+            <div><div class="stat-num">10K+</div><div class="stat-lbl">Req/s sustained</div></div>
+        </div>
+    </div>
+</section>
+
+<section id="layers">
+    <div class="container">
+        <span class="eyebrow">Architecture</span>
+        <h2>Five-layer defense, fail-closed by default.</h2>
+        <p class="section-sub">
+            Each layer runs independently and contributes to a unified risk score.
+            High-confidence detections short-circuit; ambiguous cases escalate to ML or LLM.
+        </p>
+
+        <div class="layers">
+            <div class="layer">
+                <div class="layer-num">LAYER 1</div>
+                <h3>Pattern Matching</h3>
+                <p>736 regex + keyword patterns covering OWASP ASI06 attack categories. Always on.</p>
+                <span class="lat">&lt;1 ms</span>
+            </div>
+            <div class="layer">
+                <div class="layer-num">LAYER 2-ML</div>
+                <h3>Transformer Inference</h3>
+                <p>Fine-tuned DistilBERT exported to ONNX. Catches obfuscation Layer 1 misses.</p>
+                <span class="lat">~5 ms</span>
+            </div>
+            <div class="layer">
+                <div class="layer-num">LAYER 2</div>
+                <h3>LLM Semantic Analysis</h3>
+                <p>Optional Claude-powered analysis for the highest-stakes ambiguous cases.</p>
+                <span class="lat">~200 ms</span>
+            </div>
+            <div class="layer">
+                <div class="layer-num">LAYER 3</div>
+                <h3>Trust-Aware Scoring</h3>
+                <p>Per-source trust scores boost or dampen risk for known channels.</p>
+                <span class="lat">&lt;0.1 ms</span>
+            </div>
+            <div class="layer">
+                <div class="layer-num">LAYER 4</div>
+                <h3>Behavioral Baseline</h3>
+                <p>Per-agent statistical baseline detects anomalous drift in real-time.</p>
+                <span class="lat">&lt;1 ms</span>
+            </div>
+            <div class="layer">
+                <div class="layer-num">INTEGRITY</div>
+                <h3>Memory Snapshot &amp; Rollback</h3>
+                <p>SHA-256 baselines per memory entry — detect tampering, restore last safe state.</p>
+                <span class="lat">OWASP AMG</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="features">
+    <div class="container">
+        <span class="eyebrow">What you get</span>
+        <h2>Everything an agent platform needs to stay safe in production.</h2>
+
+        <div class="features" style="margin-top: 2.5rem;">
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+                <h3>Defense in depth</h3>
+                <p>Pattern, ML, LLM, trust, behavior — five independent signals into one risk score.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>
+                <h3>10K req/s on a laptop</h3>
+                <p>Pickled patterns load in 3ms. Layer 1 sustains 10K req/s with P99 &lt; 1ms.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+                <h3>Memory integrity</h3>
+                <p>Snapshot-based hash baselines detect tampered memory entries and roll back.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+                <h3>Adaptive ML</h3>
+                <p>Auto-retrainer with quality-gated promotion. Adversarial loop generates hard negatives.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+                <h3>Signed threat feed</h3>
+                <p>Ed25519-signed pattern bundle, auto-synced from GitHub Releases, 7-day stale cutoff.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></div>
+                <h3>Drop-in for agents</h3>
+                <p>LangChain, LlamaIndex, CrewAI, AutoGen, MCP — adapters ship with the package.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg></div>
+                <h3>Built-in observability</h3>
+                <p>Prometheus metrics, PSI drift detection, OpenTelemetry tracing, OCSF SIEM events.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg></div>
+                <h3>Forensics &amp; compliance</h3>
+                <p>OCSF v1.1, EU AI Act mappings, immutable audit log with blockchain anchoring.</p>
+            </div>
+            <div class="feat">
+                <div class="feat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5l-5-3-5 3M17 19l-5 3-5-3"/></svg></div>
+                <h3>Run anywhere</h3>
+                <p>Local-first by default. Cloud-ready with API-key auth, Docker, and memgar.com.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="compare">
+    <div class="container">
+        <span class="eyebrow">vs. The Field</span>
+        <h2>Different from prompt-injection-only tools.</h2>
+        <p class="section-sub">
+            Most guardrails screen one prompt at a time. Memgar treats agent memory as
+            the attack surface and verifies it across time, source, and behavior.
+        </p>
+
+        <div class="compare">
+            <div class="compare-card highlight">
+                <div class="compare-name">Memgar <span class="badge">Open source</span></div>
+                <ul>
+                    <li class="yes">Memory poisoning detection</li>
+                    <li class="yes">Snapshot &amp; rollback (OWASP AMG)</li>
+                    <li class="yes">Per-source trust scoring</li>
+                    <li class="yes">Behavioral baseline drift</li>
+                    <li class="yes">Local + cloud deployment</li>
+                    <li class="yes">Agent framework adapters</li>
+                </ul>
+            </div>
+            <div class="compare-card">
+                <div class="compare-name">Lakera Guard</div>
+                <ul>
+                    <li class="yes">Prompt injection detection</li>
+                    <li class="no">Snapshot &amp; rollback</li>
+                    <li class="no">Per-source trust scoring</li>
+                    <li class="no">Behavioral baseline drift</li>
+                    <li class="no">Self-hosted core</li>
+                    <li class="yes">SaaS API</li>
+                </ul>
+            </div>
+            <div class="compare-card">
+                <div class="compare-name">NeMo Guardrails</div>
+                <ul>
+                    <li class="no">Memory poisoning focus</li>
+                    <li class="no">Snapshot &amp; rollback</li>
+                    <li class="no">Per-source trust scoring</li>
+                    <li class="no">Behavioral baseline drift</li>
+                    <li class="yes">Local deployment</li>
+                    <li class="yes">Conversation flow control</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="install">
+    <div class="container">
+        <div class="install-grid">
+            <div class="install-text">
+                <span class="eyebrow">Get started</span>
+                <h2>Installs in two lines, runs in five.</h2>
+                <p>
+                    Pure Python core with optional ML, LLM, and integration extras.
+                    Open-source MIT — drop it into any agent stack today.
+                </p>
+                <div class="hero-cta" style="justify-content: flex-start;">
+                    <a href="https://docs.memgar.io" class="btn btn-primary">Read the docs →</a>
+                    <a href="https://github.com/slcxtor/memgar" class="btn btn-secondary">View source</a>
+                </div>
+            </div>
+            <div class="code-card" style="margin: 0;">
+                <div class="code-head">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                    <span class="lang">bash</span>
+                </div>
+<pre><span class="com"># Install</span>
+$ pip install memgar
+
+<span class="com"># Or with ML transformer + observability</span>
+$ pip install <span class="str">"memgar[ml,observability]"</span>
+
+<span class="com"># Use</span>
+$ python -c <span class="str">"
+from memgar import Analyzer, MemoryEntry
+a = Analyzer()
+print(a.analyze(MemoryEntry(content='hi')))"</span>
+
+<span class="com"># Or run the API</span>
+$ memgar serve --host 0.0.0.0 --port <span class="num">8000</span></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<footer>
+    <div class="container">
+        <div class="footer-grid">
+            <div class="footer-col">
+                <div class="logo" style="margin-bottom: .75rem;"><span class="logo-dot"></span>memgar</div>
+                <p style="color: var(--ink-3); font-size: .88rem; max-width: 280px;">
+                    AI agent memory security. Open-source, production-grade, OWASP-aligned.
+                </p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="#layers">Architecture</a>
+                <a href="#features">Features</a>
+                <a href="#compare">Compare</a>
+                <a href="https://docs.memgar.io">Documentation</a>
+            </div>
+            <div class="footer-col">
+                <h4>Resources</h4>
+                <a href="https://github.com/slcxtor/memgar">GitHub</a>
+                <a href="https://github.com/slcxtor/memgar/blob/main/CHANGELOG.md">Changelog</a>
+                <a href="https://github.com/slcxtor/memgar/blob/main/SECURITY.md">Security</a>
+                <a href="https://github.com/slcxtor/memgar/issues">Issues</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="mailto:hello@memgar.io">Contact</a>
+                <a href="https://github.com/slcxtor/memgar/blob/main/LICENSE">License (MIT)</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <span>© 2026 memgar — All rights reserved.</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: .8rem;">v0.5.6</span>
+        </div>
+    </div>
+</footer>
+
+</body>
+</html>

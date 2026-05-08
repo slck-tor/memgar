@@ -10,6 +10,12 @@
 *.model
 *.weights
 
+# Transformer / ONNX artifacts (generated during training — not committed)
+*.onnx
+*.safetensors
+ml/artifacts/transformer_model/
+ml/artifacts/transformer_checkpoints/
+
 # Keep current model config, ignore backups and versioned snapshots
 !*.pkl.config.json
 *.pkl.backup

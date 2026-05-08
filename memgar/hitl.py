@@ -75,9 +75,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -532,6 +534,11 @@ class EmailNotifier(HITLNotifier):
             with smtplib.SMTP(self._host, self._port) as s:
                 if self._tls:
                     s.starttls()
+                elif self._pass:
+                    raise RuntimeError(
+                        "SMTP credentials supplied but use_tls=False. "
+                        "Set use_tls=True to protect credentials in transit."
+                    )
                 if self._pass:
                     s.login(self._user, self._pass)
                 s.send_message(msg)
@@ -562,7 +569,8 @@ class _HITLHandler(BaseHTTPRequestHandler):
 
         with _pending_lock:
             req = next(
-                (r for r in _pending_requests.values() if r.token == token),
+                (r for r in _pending_requests.values()
+                 if hmac.compare_digest(r.token, token)),
                 None
             )
 
@@ -628,6 +636,12 @@ class HITLServer:
         self.host = host
         self.port = port
         self._base = (public_base_url or f"http://{host}:{port}").rstrip("/")
+        if self._base.startswith("http://") and host not in ("127.0.0.1", "::1", "localhost"):
+            logger.warning(
+                "[HITL] Callback server is using plain HTTP on a non-loopback address (%s). "
+                "Approval tokens may be intercepted. Use HTTPS or a TLS-terminating proxy.",
+                self._base,
+            )
         self._server: Optional[HTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -1033,9 +1047,7 @@ def _iso(ts: Optional[float]) -> Optional[str]:
 
 
 def _make_token() -> str:
-    return hashlib.sha256(
-        f"{uuid.uuid4()}{time.perf_counter_ns()}".encode()
-    ).hexdigest()[:32]
+    return secrets.token_hex(32)
 
 
 def create_checkpoint(

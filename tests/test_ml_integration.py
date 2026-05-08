@@ -72,7 +72,7 @@ class TestMLPipeline:
         
         # Extract features manually
         features = extractor.extract(text)
-        assert len(features) == 40
+        assert len(features) == 41
         
         # Detector should also work
         result = detector.detect(text)

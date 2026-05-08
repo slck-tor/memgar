@@ -3766,3 +3766,263 @@ def serve(
 
 if __name__ == "__main__":
     main()
+
+
+# =============================================================================
+# KEYS — multi-tenant API key management
+# =============================================================================
+
+@main.group("keys")
+def keys_group():
+    """Manage multi-tenant API keys (TenantStore)."""
+
+
+def _get_store():
+    from memgar.tenants import TenantStore
+    return TenantStore()
+
+
+@keys_group.command("create-tenant")
+@click.argument("name")
+@click.option("--plan", default="starter",
+              type=click.Choice(["free", "starter", "pro", "enterprise"]),
+              show_default=True, help="Subscription plan")
+def keys_create_tenant(name: str, plan: str) -> None:
+    """Create a new tenant (e.g. 'Acme Corp')."""
+    store = _get_store()
+    tenant = store.create_tenant(name=name, plan=plan)
+    console.print(f"[green]Tenant created[/green]")
+    t = Table(show_header=False, box=box.SIMPLE)
+    t.add_row("ID",   tenant.id)
+    t.add_row("Name", tenant.name)
+    t.add_row("Plan", tenant.plan)
+    t.add_row("RPM",  str(tenant.rate_limit_rpm))
+    console.print(t)
+
+
+@keys_group.command("create-key")
+@click.argument("tenant_id")
+@click.option("--name", default="default", show_default=True,
+              help="Label for this key (e.g. 'production')")
+def keys_create_key(tenant_id: str, name: str) -> None:
+    """Generate an API key for TENANT_ID."""
+    store = _get_store()
+    try:
+        key = store.create_key(tenant_id=tenant_id, name=name)
+    except ValueError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise SystemExit(1)
+    console.print(f"[green]API key created[/green]")
+    t = Table(show_header=False, box=box.SIMPLE)
+    t.add_row("Key",       f"[bold]{key.key}[/bold]")
+    t.add_row("Tenant",    key.tenant_id)
+    t.add_row("Name",      key.name)
+    t.add_row("RPM limit", str(key.rate_limit_rpm))
+    console.print(t)
+    console.print(
+        "\n[dim]Set X-API-Key: <key> header in requests.[/dim]"
+    )
+
+
+@keys_group.command("list")
+@click.option("--tenant", "tenant_id", default=None, help="Filter by tenant ID")
+def keys_list(tenant_id: "Optional[str]") -> None:
+    """List API keys (all tenants or filtered by --tenant)."""
+    store = _get_store()
+    keys = store.list_keys(tenant_id=tenant_id)
+    if not keys:
+        console.print("[yellow]No keys found.[/yellow]")
+        return
+    t = Table(title="API Keys", box=box.SIMPLE_HEAVY)
+    t.add_column("Key (prefix)", style="bold")
+    t.add_column("Tenant")
+    t.add_column("Name")
+    t.add_column("RPM", justify="right")
+    t.add_column("Requests", justify="right")
+    t.add_column("Active")
+    t.add_column("Last used")
+    for k in keys:
+        prefix = k.key[:22] + "…"
+        last = (
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(k.last_used_at))
+            if k.last_used_at else "—"
+        )
+        t.add_row(
+            prefix, k.tenant_id, k.name,
+            str(k.rate_limit_rpm), str(k.request_count),
+            "[green]yes[/green]" if k.active else "[red]no[/red]",
+            last,
+        )
+    console.print(t)
+
+
+@keys_group.command("tenants")
+def keys_tenants() -> None:
+    """List all tenants."""
+    store = _get_store()
+    tenants = store.list_tenants()
+    if not tenants:
+        console.print("[yellow]No tenants yet.  Run: memgar keys create-tenant 'Company'[/yellow]")
+        return
+    t = Table(title="Tenants", box=box.SIMPLE_HEAVY)
+    t.add_column("ID")
+    t.add_column("Name")
+    t.add_column("Plan")
+    t.add_column("RPM", justify="right")
+    t.add_column("Active")
+    for tenant in tenants:
+        t.add_row(
+            tenant.id, tenant.name, tenant.plan,
+            str(tenant.rate_limit_rpm),
+            "[green]yes[/green]" if tenant.active else "[red]no[/red]",
+        )
+    console.print(t)
+
+
+@keys_group.command("usage")
+@click.argument("tenant_id")
+def keys_usage(tenant_id: str) -> None:
+    """Show usage stats for TENANT_ID."""
+    store = _get_store()
+    tenant = store.get_tenant(tenant_id)
+    if tenant is None:
+        console.print(f"[red]Tenant '{tenant_id}' not found.[/red]")
+        raise SystemExit(1)
+    stats = store.usage_stats(tenant_id)
+    t = Table(show_header=False, box=box.SIMPLE)
+    t.add_row("Tenant", tenant.name)
+    t.add_row("Plan", tenant.plan)
+    t.add_row("Active keys", str(stats["active_keys"]))
+    t.add_row("Total requests", str(stats["total_requests"]))
+    last = (
+        time.strftime("%Y-%m-%d %H:%M", time.localtime(stats["last_active"]))
+        if stats["last_active"] else "—"
+    )
+    t.add_row("Last active", last)
+    console.print(t)
+
+
+@keys_group.command("revoke")
+@click.argument("key")
+@click.confirmation_option(prompt="Revoke this key?")
+def keys_revoke(key: str) -> None:
+    """Revoke KEY immediately."""
+    store = _get_store()
+    ok = store.revoke_key(key)
+    if ok:
+        console.print("[green]Key revoked.[/green]")
+    else:
+        console.print("[red]Key not found.[/red]")
+        raise SystemExit(1)
+
+
+# =============================================================================
+# BRANDS GROUP — Brand Bias Detection
+# =============================================================================
+
+def _get_brand_detector(db_path: Optional[str] = None):
+    from memgar.brand_bias import BrandBiasDetector
+    return BrandBiasDetector(db_path=db_path)
+
+
+@main.group("brands")
+def brands_group() -> None:
+    """Brand bias detection — monitor agent recommendation patterns."""
+    pass
+
+
+@brands_group.command("report")
+@click.argument("agent_id")
+@click.option("--db", default=None, help="Path to brand_bias.db (default: ~/.cache/memgar/brand_bias.db)")
+def brands_report(agent_id: str, db: Optional[str]) -> None:
+    """Show brand bias report for AGENT_ID."""
+    import time as _time
+    detector = _get_brand_detector(db)
+    report = detector.check(agent_id)
+
+    if report.total_mentions == 0:
+        console.print(f"[yellow]No brand mentions recorded for agent '{agent_id}'.[/yellow]")
+        return
+
+    status_color = "red" if report.is_biased else "green"
+    status_label = "BIASED" if report.is_biased else "CLEAN"
+    console.print(Panel(
+        f"[bold {status_color}]{status_label}[/bold {status_color}]  |  "
+        f"Dominant: [bold]{report.dominant_brand or '—'}[/bold]  |  "
+        f"Dominance: {report.dominance_ratio:.1%}  |  "
+        f"Entropy: {report.entropy:.2f}",
+        title=f"Brand Bias Report — {agent_id}",
+        border_style=status_color,
+    ))
+
+    t = Table(show_header=True, box=box.SIMPLE)
+    t.add_column("Metric", style="bold")
+    t.add_column("Value")
+    t.add_row("Total mentions", str(report.total_mentions))
+    t.add_row("Unique brands", str(report.unique_brands))
+    t.add_row("Recommendation mentions", str(report.recommendation_mentions))
+    t.add_row("Risk boost", f"+{report.risk_boost} pts" if report.risk_boost else "0 pts")
+    if report.bias_since is not None:
+        age = report.bias_since_age_hours
+        t.add_row("Bias detected since", f"{_time.strftime('%Y-%m-%d %H:%M', _time.localtime(report.bias_since))} ({age}h ago)")
+    console.print(t)
+
+    if report.details:
+        console.print("\n[bold]Brand distribution:[/bold]")
+        bt = Table(show_header=True, box=box.SIMPLE)
+        bt.add_column("Brand")
+        bt.add_column("Mentions", justify="right")
+        bt.add_column("Share", justify="right")
+        total = report.total_mentions
+        for brand, count in list(report.details.items())[:10]:
+            share = count / total if total else 0
+            color = "red" if share >= 0.8 else ("yellow" if share >= 0.5 else "")
+            bt.add_row(
+                f"[{color}]{brand}[/{color}]" if color else brand,
+                str(count),
+                f"{share:.1%}",
+            )
+        console.print(bt)
+
+
+@brands_group.command("reset")
+@click.argument("agent_id")
+@click.confirmation_option(prompt="Clear all brand history for this agent?")
+@click.option("--db", default=None, help="Path to brand_bias.db")
+def brands_reset(agent_id: str, db: Optional[str]) -> None:
+    """Clear brand history for AGENT_ID (post-remediation)."""
+    detector = _get_brand_detector(db)
+    detector.reset_agent(agent_id)
+    console.print(f"[green]Brand history cleared for agent '{agent_id}'.[/green]")
+
+
+@brands_group.command("list")
+@click.option("--db", default=None, help="Path to brand_bias.db")
+def brands_list(db: Optional[str]) -> None:
+    """List all agents with recorded brand history."""
+    detector = _get_brand_detector(db)
+    agents = detector.list_agents()
+    stats = detector.stats()
+
+    if not agents:
+        console.print("[yellow]No agents tracked yet.[/yellow]")
+        return
+
+    console.print(f"[dim]Tracking {stats['agents_tracked']} agents, {stats['total_mentions']} total mentions[/dim]\n")
+
+    t = Table(show_header=True, box=box.SIMPLE)
+    t.add_column("Agent ID")
+    t.add_column("Mentions", justify="right")
+    t.add_column("Status")
+    t.add_column("Top Brand")
+
+    for agent_id in sorted(agents):
+        report = detector.check(agent_id)
+        status = "[red]BIASED[/red]" if report.is_biased else "[green]clean[/green]"
+        top = report.dominant_brand or (
+            max(report.details, key=report.details.__getitem__)
+            if report.details else "—"
+        )
+        t.add_row(agent_id, str(report.total_mentions), status, top)
+
+    console.print(t)

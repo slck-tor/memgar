@@ -1,0 +1,117 @@
+# Production stack for memgar.com
+#
+# Stack: Caddy (HTTPS, auto-SSL) → memgar-api → Prometheus + Grafana
+#
+# Run from the repo root:
+#   cp deploy/.env.example .env && $EDITOR .env
+#   docker compose -f deploy/docker-compose.prod.yml --env-file .env up -d
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: memgar-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      GRAFANA_BASIC_AUTH_HASH: ${GRAFANA_BASIC_AUTH_HASH:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./landing:/srv/landing:ro          # marketing landing page
+      - caddy-data:/data                   # certificates (do not delete!)
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    depends_on:
+      - memgar-api
+    networks:
+      - memgar-net
+
+  memgar-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: memgar:latest
+    container_name: memgar-api
+    restart: unless-stopped
+    expose:
+      - "8000"
+      - "9090"
+    environment:
+      MEMGAR_API_KEYS:           ${MEMGAR_API_KEYS}
+      MEMGAR_TRUSTED_PROXIES:    "172.16.0.0/12,127.0.0.1"  # docker network + caddy
+      MEMGAR_FEED_ENABLED:       "true"
+      MEMGAR_FEED_GITHUB_REPO:   "slcxtor/memgar"
+      MEMGAR_TRANSFORMER_THRESHOLD: "0.92"
+      MEMGAR_ORT_THREADS:        "2"
+      MEMGAR_OBSERVABILITY_ENABLED: "true"
+      MEMGAR_OBSERVABILITY_PORT: "9090"
+      MEMGAR_CACHE_DIR:          "/data/cache"
+    volumes:
+      - memgar-cache:/data/cache
+      - memgar-integrity:/data/integrity   # MemoryIntegrityStore SQLite
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+    networks:
+      - memgar-net
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: memgar-prometheus
+    restart: unless-stopped
+    expose:
+      - "9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.external-url=https://metrics.memgar.com/prometheus"
+    depends_on:
+      - memgar-api
+    networks:
+      - memgar-net
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: memgar-grafana
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD:  ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD required}
+      GF_USERS_ALLOW_SIGN_UP:      "false"
+      GF_SERVER_ROOT_URL:          "https://metrics.memgar.com"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - memgar-net
+
+networks:
+  memgar-net:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-logs:
+  memgar-cache:
+  memgar-integrity:
+  prometheus-data:
+  grafana-data:

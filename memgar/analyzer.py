@@ -13,10 +13,13 @@ Improvements:
 
 from __future__ import annotations
 
+import os
 import re
+import threading
 import time
 import unicodedata
 import logging
+from difflib import SequenceMatcher
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -517,6 +520,85 @@ DANGER_OVERRIDE_PATTERNS = [
 
 _COMPILED_DANGER_OVERRIDES = [re.compile(p) for p in DANGER_OVERRIDE_PATTERNS]
 
+# =============================================================================
+# IMPROVEMENT 2: Whitelist bypass-signal guard
+# =============================================================================
+
+_WHITELIST_BYPASS_SIGNALS = re.compile(
+    r"(?i)\b(simulat|test\s+mode|demo\s+mode|for\s+testing|hypothetically|"
+    r"pretend|as\s+if|act\s+as|roleplay|role\s+play|scenario|"
+    r"in\s+this\s+context|for\s+this\s+exercise|training\s+purposes)\b"
+)
+
+# =============================================================================
+# IMPROVEMENT 3: Fuzzy keyword matching for critical threats
+# =============================================================================
+
+_CRITICAL_KEYWORDS_FUZZY = [
+    "ignore all previous instructions",
+    "disregard your instructions",
+    "forget everything above",
+    "new primary directive",
+    "from now on you will",
+    "your new task is",
+    "act as if you have no",
+    "developer mode enabled",
+]
+
+
+def _fuzzy_threat_check(content: str) -> bool:
+    """Check if content is within edit-distance of critical attack phrases.
+
+    Uses SequenceMatcher ratio on a sliding window so common single characters
+    (e.g. letters present in any English text) don't cause false positives.
+    When the content is shorter than the window, the whole content is compared.
+    """
+    content_lower = content.lower()
+    for phrase in _CRITICAL_KEYWORDS_FUZZY:
+        plen = len(phrase)
+        window = plen + plen // 5
+        n_positions = max(1, len(content_lower) - window + 1)
+        for i in range(n_positions):
+            chunk = content_lower[i:i+window]
+            ratio = SequenceMatcher(None, phrase, chunk).ratio()
+            if ratio >= 0.82:
+                return True
+    return False
+
+
+# =============================================================================
+# IMPROVEMENT 4: ContextBuffer for context-split detection
+# =============================================================================
+
+class ContextBuffer:
+    """Sliding window of recent entries per session for context-split detection."""
+
+    def __init__(self, window_size: int = 5, ttl_seconds: int = 300):
+        self._sessions: dict[str, list[tuple[str, float]]] = {}
+        self._lock = threading.Lock()
+        self._window = window_size
+        self._ttl = ttl_seconds
+
+    def add(self, session_id: str, content: str) -> list[str]:
+        """Add entry, return recent window for this session."""
+        now = time.time()
+        with self._lock:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = []
+            # Evict expired
+            self._sessions[session_id] = [
+                (c, t) for c, t in self._sessions[session_id]
+                if now - t < self._ttl
+            ]
+            self._sessions[session_id].append((content, now))
+            # Keep window
+            self._sessions[session_id] = self._sessions[session_id][-self._window:]
+            return [c for c, _ in self._sessions[session_id]]
+
+    def clear_session(self, session_id: str) -> None:
+        with self._lock:
+            self._sessions.pop(session_id, None)
+
 
 # =============================================================================
 # DEOBFUSCATION HELPERS
@@ -945,10 +1027,16 @@ class Analyzer:
         use_sliding_window: bool = True,
         window_size: int = 1000,
         window_overlap: int = 200,
+        memory_store: Any = None,
+        semantic_guard: bool = True,
+        context_buffer: bool = True,
+        use_transformer_ml: bool = True,
+        integrity_store: Any = None,
+        brand_bias_detector: Any = None,
     ) -> None:
         """
         Initialize the analyzer.
-        
+
         Args:
             use_llm: Enable LLM-based semantic analysis (Layer 2)
             api_key: API key for cloud features
@@ -958,6 +1046,9 @@ class Analyzer:
             use_sliding_window: Enable sliding window for long content analysis
             window_size: Size of each analysis window (chars)
             window_overlap: Overlap between windows to catch split payloads
+            memory_store: Optional MemoryStore for hunter retroactive scanning
+            semantic_guard: Enable Layer 1.5 SemanticGuard (embedding similarity)
+            context_buffer: Enable stateful context-split detection per session
         """
         self.use_llm = use_llm
         self.api_key = api_key
@@ -966,13 +1057,13 @@ class Analyzer:
         self.use_sliding_window = use_sliding_window
         self.window_size = window_size
         self.window_overlap = window_overlap
-        
+
         # Combine default and custom patterns
         # Load patterns: pickle cache (3ms) → full import (3500ms)
         self.patterns = _load_patterns_fast()
         if custom_patterns:
             self.patterns.extend(custom_patterns)
-        
+
         # Pre-compile regex patterns for performance
         self._compiled_patterns: dict[str, list[re.Pattern[str]]] = {}
         self._compile_patterns()
@@ -983,6 +1074,42 @@ class Analyzer:
         self._baselines: dict[str, Any] = {}
         # Production feedback — set None so hasattr race in threaded analyze() is avoided
         self._storage_manager: Any = None
+        # Optional MemoryStore for hunter retroactive scanning
+        self._memory_store: Any = memory_store
+
+        # Layer 1.5: SemanticGuard (optional, requires sentence-transformers)
+        self._semantic_guard = None
+        self._semantic_guard_threshold = 0.75
+        if semantic_guard:
+            try:
+                from memgar.semantic_guard import SemanticGuard
+                self._semantic_guard = SemanticGuard()
+            except Exception:
+                pass
+
+        # Improvement 4: ContextBuffer for context-split detection
+        self._context_buffer: ContextBuffer | None = ContextBuffer() if context_buffer else None
+
+        # Memory Integrity: snapshot + verify + rollback (OWASP Agent Memory Guard)
+        self._integrity_store: Any = integrity_store
+
+        # Brand Bias Detector (Layer 4 extension for e-commerce / recommendation agents)
+        self._brand_bias_detector: Any = brand_bias_detector
+
+        # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for high-confidence cases)
+        self._transformer: Any = None
+        self._transformer_threshold: float = float(
+            os.environ.get("MEMGAR_TRANSFORMER_THRESHOLD", "0.92")
+        )
+        if use_transformer_ml:
+            try:
+                from ml.inference.transformer_detector import TransformerDetector
+                det = TransformerDetector.load()
+                if det.is_ready:
+                    self._transformer = det
+                    logger.info("Analyzer: transformer backend ready (%s)", det._backend)
+            except Exception:
+                pass
     
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
@@ -1039,6 +1166,42 @@ class Analyzer:
 
             result = self._analyze_internal(entry)
 
+            # Improvement 4: Context-split detection via session buffer
+            if self._context_buffer is not None and entry.source_id:
+                try:
+                    window = self._context_buffer.add(entry.source_id, entry.content or "")
+                    if len(window) >= 2:
+                        combined = " ".join(window)
+                        combined_threats = self._layer1_pattern_matching(combined)
+                        existing_ids = {t.threat.id for t in result.threats}
+                        new_threats = [t for t in combined_threats if t.threat.id not in existing_ids]
+                        if new_threats:
+                            from memgar.models import ThreatCategory
+                            ctx_threat = ThreatMatch(
+                                threat=Threat(
+                                    id="CTX-001",
+                                    name="Context-Split Attack Detected",
+                                    description="Threat detected only when analyzing combined session context",
+                                    category=ThreatCategory.BEHAVIOR,
+                                    severity=Severity.MEDIUM,
+                                    patterns=[],
+                                    keywords=[],
+                                    examples=[],
+                                ),
+                                matched_text=combined[:100],
+                                match_type="context_split",
+                                confidence=0.75,
+                                position=(0, min(len(combined), 100)),
+                            )
+                            if "CTX-001" not in existing_ids:
+                                result.threats = list(result.threats) + [ctx_threat]
+                            result.risk_score = min(100, result.risk_score + 20)
+                            result.layers_used = list(result.layers_used) + ["context_buffer"]
+                            result.decision = self._make_decision(result.threats, result.risk_score)
+                            result.explanation = "[CTX-SPLIT] " + result.explanation
+                except Exception:
+                    pass
+
             # Layer 4: Behavioral baseline deviation detection (per-agent)
             with tracer.start_as_current_span("memgar.layer4.behavioral_baseline") as l4:
                 try:
@@ -1059,6 +1222,52 @@ class Analyzer:
                         l4.set_attribute("memgar.l4.risk_delta", boost)
                     else:
                         l4.set_attribute("memgar.l4.risk_delta", 0)
+                except Exception:
+                    pass
+
+            # Layer 4 extension: Brand Bias Detection
+            if self._brand_bias_detector is not None:
+                try:
+                    agent_id = (entry.metadata or {}).get("agent_id", "default")
+                    bias_report = self._brand_bias_detector.record_and_check(
+                        entry.content or "", agent_id
+                    )
+                    if bias_report.is_biased and bias_report.risk_boost > 0:
+                        from memgar.models import ThreatCategory
+                        bias_threat = ThreatMatch(
+                            threat=Threat(
+                                id="BRAND-BIAS-DET",
+                                name="Persistent Brand Bias Detected",
+                                description=(
+                                    f"Agent '{agent_id}' shows {bias_report.dominance_ratio:.0%} "
+                                    f"bias toward '{bias_report.dominant_brand}' "
+                                    f"(entropy={bias_report.entropy:.2f})"
+                                ),
+                                category=ThreatCategory.MANIPULATION,
+                                severity=Severity.HIGH if bias_report.risk_boost >= 30 else Severity.MEDIUM,
+                                patterns=[],
+                                keywords=[],
+                                examples=[],
+                                mitre_attack="T1656",
+                            ),
+                            matched_text=(entry.content or "")[:120],
+                            match_type="brand_bias",
+                            confidence=round(bias_report.dominance_ratio, 3),
+                            position=(0, min(len(entry.content or ""), 120)),
+                        )
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "BRAND-BIAS-DET" not in existing_ids:
+                            result.threats = list(result.threats) + [bias_threat]
+                        result.risk_score = min(100, result.risk_score + bias_report.risk_boost)
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.layers_used = list(result.layers_used) + ["brand_bias_detector"]
+                        result.explanation = f"[BRAND-BIAS:{bias_report.dominant_brand}] " + result.explanation
+                    if not hasattr(result, "metadata") or result.metadata is None:
+                        result.metadata = {}  # type: ignore[attr-defined]
+                    try:
+                        result.metadata["bias_report"] = bias_report  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -1104,7 +1313,42 @@ class Analyzer:
         except Exception:
             pass
 
+        # Feed MemoryStore for retroactive hunter scanning (if attached)
+        if self._memory_store is not None:
+            try:
+                self._memory_store.add(entry)
+            except Exception:
+                pass
+
+        # Memory Integrity: auto-snapshot entries that pass analysis
+        if self._integrity_store is not None and result.decision == Decision.ALLOW:
+            try:
+                self._integrity_store.snapshot(entry)
+            except Exception:
+                pass
+
         return result
+
+    def verify_integrity(self, entry: MemoryEntry, entry_id: str | None = None):
+        """Check whether *entry* has been tampered with since its last snapshot.
+
+        Returns an ``IntegrityViolation`` if the content hash differs from the
+        stored baseline, or ``None`` if it is clean (or not yet snapshotted).
+        Requires an ``integrity_store`` to have been passed to ``__init__``.
+        """
+        if self._integrity_store is None:
+            return None
+        return self._integrity_store.verify(entry, entry_id=entry_id)
+
+    def rollback(self, entry_id: str, steps_back: int = 1):
+        """Return the most recent safe snapshot for *entry_id*.
+
+        Use this after ``verify_integrity()`` reports a violation to retrieve
+        the last trusted content.  Returns ``None`` if no snapshot exists.
+        """
+        if self._integrity_store is None:
+            return None
+        return self._integrity_store.rollback(entry_id, steps_back=steps_back)
 
     async def analyze_async(self, entry: MemoryEntry) -> AnalysisResult:
         """Async wrapper for analyze() — safe for use in asyncio-based frameworks.
@@ -1138,22 +1382,27 @@ class Analyzer:
         
         # Check whitelist first
         if self.use_whitelist and _is_safe_content(content):
-            # For long content, only check head/tail for hidden critical threats.
-            # Payloads are almost always injected at the start or end of a document.
-            if len(check_content) > 2000:
-                head_tail = check_content[:1500] + check_content[-500:]
-                critical_threats = self._check_critical_only(head_tail)
+            # Improvement 2: if content contains meta-framing bypass signals,
+            # skip the whitelist early-return and fall through to full analysis.
+            if _WHITELIST_BYPASS_SIGNALS.search(content):
+                pass  # fall through to Layer 1
             else:
-                critical_threats = self._check_critical_only(check_content)
-            if not critical_threats:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                return AnalysisResult(
-                    decision=Decision.ALLOW,
-                    risk_score=0,
-                    explanation="Content matches safe patterns",
-                    analysis_time_ms=round(elapsed_ms, 2),
-                    layers_used=["whitelist"]
-                )
+                # For long content, only check head/tail for hidden critical threats.
+                # Payloads are almost always injected at the start or end of a document.
+                if len(check_content) > 2000:
+                    head_tail = check_content[:1500] + check_content[-500:]
+                    critical_threats = self._check_critical_only(head_tail)
+                else:
+                    critical_threats = self._check_critical_only(check_content)
+                if not critical_threats:
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000
+                    return AnalysisResult(
+                        decision=Decision.ALLOW,
+                        risk_score=0,
+                        explanation="Content matches safe patterns",
+                        analysis_time_ms=round(elapsed_ms, 2),
+                        layers_used=["whitelist"]
+                    )
         
         from memgar.observability.tracing import get_tracer
         tracer = get_tracer()
@@ -1187,7 +1436,83 @@ class Analyzer:
             threats = [t for t in threats if t.confidence > 0.7 or
                        t.threat.severity in [Severity.CRITICAL, Severity.HIGH]]
 
-        # Layer 2: Semantic Analysis (if enabled)
+        # Improvement 3: Fuzzy keyword matching when Layer 1 finds nothing
+        if not threats and _fuzzy_threat_check(check_content):
+            from memgar.models import ThreatCategory
+            fuzzy_threat = ThreatMatch(
+                threat=Threat(
+                    id="FUZZY-001",
+                    name="Fuzzy Match to Critical Attack Phrase",
+                    description="Content is within edit-distance of a known critical attack phrase",
+                    category=ThreatCategory.BEHAVIOR,
+                    severity=Severity.LOW,
+                    patterns=[],
+                    keywords=[],
+                    examples=[],
+                ),
+                matched_text=check_content[:100],
+                match_type="fuzzy",
+                confidence=0.5,
+                position=(0, min(len(check_content), 100)),
+            )
+            threats.append(fuzzy_threat)
+            layers_used.append("fuzzy_matching")
+
+        # Layer 1.5: SemanticGuard (embedding similarity)
+        if self._semantic_guard is not None:
+            sg_score = self._semantic_guard.score(check_content)
+            if sg_score >= self._semantic_guard_threshold:
+                from memgar.models import ThreatCategory
+                sem_threat = ThreatMatch(
+                    threat=Threat(
+                        id="SEM-001",
+                        name="Semantic Similarity to Known Attacks",
+                        description="Content semantically similar to known attack patterns",
+                        category=ThreatCategory.BEHAVIOR,
+                        severity=Severity.HIGH,
+                        patterns=[],
+                        keywords=[],
+                        examples=[],
+                    ),
+                    matched_text=check_content[:100],
+                    match_type="semantic",
+                    confidence=round(sg_score, 3),
+                    position=(0, min(len(check_content), 100)),
+                )
+                existing_ids = {t.threat.id for t in threats}
+                if "SEM-001" not in existing_ids:
+                    threats.append(sem_threat)
+                layers_used.append("semantic_guard")
+
+        # Layer 2-ML: Transformer inference (ONNX, ~5ms — no API call)
+        # High confidence (≥threshold) → add ML-DETECT threat and boost risk score.
+        # Low confidence → pass through; LLM Layer 2 (if enabled) handles borderline.
+        if self._transformer and self._transformer.is_ready:
+            with tracer.start_as_current_span("memgar.layer2ml.transformer") as l2ml:
+                ml_prob, ml_latency = self._transformer.predict(content)
+                l2ml.set_attribute("memgar.l2ml.prob", ml_prob)
+                l2ml.set_attribute("memgar.l2ml.latency_ms", ml_latency)
+                if ml_prob >= self._transformer_threshold:
+                    layers_used.append("transformer_ml")
+                    from memgar.models import ThreatMatch, ThreatCategory as _TC
+                    ml_threat = Threat(
+                        id="ML-DETECT-001",
+                        name="ML Transformer Detection",
+                        description="Fine-tuned DistilBERT flagged this content as an attack",
+                        category=_TC.BEHAVIOR,
+                        severity=Severity.HIGH if ml_prob >= 0.90 else Severity.MEDIUM,
+                        patterns=[],
+                        keywords=[],
+                        examples=[],
+                    )
+                    threats.append(ThreatMatch(
+                        threat=ml_threat,
+                        matched_text=content[:120],
+                        match_type="ml_transformer",
+                        confidence=round(ml_prob, 4),
+                    ))
+
+        # Layer 2: Semantic Analysis via LLM (optional, ~200ms — only for borderline)
         if self.use_llm:
             with tracer.start_as_current_span("memgar.layer2.semantic_analysis") as l2:
                 semantic_threats = self._layer2_semantic_analysis(content, threats)

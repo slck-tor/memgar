@@ -30,6 +30,28 @@ from enum import Enum
 from collections import defaultdict
 import time
 
+
+class _MLModelUnpickler(pickle.Unpickler):
+    """Allowlist-based unpickler for sklearn/numpy model artifacts (prevents RCE).
+
+    Allows builtins, numpy, sklearn, scipy, and sklearn's Cython extension modules
+    (prefixed with ``_``) which are legitimate internal modules of scikit-learn.
+    All other modules are blocked to prevent arbitrary code execution via pickle.
+    """
+    _SAFE_ROOTS = {
+        "builtins", "numpy", "sklearn", "scipy", "joblib",
+        "_functools", "copy_reg", "collections", "abc",
+        # sklearn Cython extensions (stored without the sklearn. prefix by pickle)
+        "_loss", "_tree", "_splitter", "_criterion", "_utils", "_random",
+        "_isotonic", "_pairwise_distances_reduction", "_validation",
+    }
+
+    def find_class(self, module: str, name: str):
+        root = module.split(".")[0]
+        if root not in self._SAFE_ROOTS:
+            raise pickle.UnpicklingError(f"Forbidden pickle class: {module}.{name}")
+        return super().find_class(module, name)
+
 try:
     from ml.thresholds import ThresholdManager
 except Exception:  # pragma: no cover
@@ -211,7 +233,7 @@ class MLSemanticDetector:
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model file not found: {model_path}")
             with open(model_path, "rb") as fh:
-                self._sklearn_model = pickle.load(fh)
+                self._sklearn_model = _MLModelUnpickler(fh).load()
 
         # Feature extractor (used when sklearn model is present)
         self._feature_extractor = None

@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  memgar-api:
+    build: .
+    image: memgar:latest
+    container_name: memgar-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # --- Auth (required for production) ---
+      MEMGAR_API_KEYS: ${MEMGAR_API_KEYS:-}          # comma-separated: sk-memgar-xxx,sk-memgar-yyy
+      # --- Proxy trust (set to your load-balancer IPs) ---
+      MEMGAR_TRUSTED_PROXIES: ${MEMGAR_TRUSTED_PROXIES:-}
+      # --- Feed ---
+      MEMGAR_FEED_ENABLED: "true"
+      MEMGAR_FEED_MAX_AGE_DAYS: "7"
+      MEMGAR_FEED_GITHUB_REPO: "slcxtor/memgar"
+      # --- ML ---
+      MEMGAR_TRANSFORMER_THRESHOLD: "0.75"
+      MEMGAR_ORT_THREADS: "2"
+      # --- Observability ---
+      MEMGAR_OBSERVABILITY_ENABLED: "true"
+      MEMGAR_OBSERVABILITY_PORT: "9090"
+      MEMGAR_OBSERVABILITY_DRIFT_THRESHOLD: "0.20"
+    volumes:
+      - memgar-cache:/data/cache
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Prometheus scrapes metrics from :9090/metrics
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: memgar-prometheus
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    depends_on:
+      - memgar-api
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: memgar-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-memgar-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  memgar-cache:
+  prometheus-data:
+  grafana-data:
