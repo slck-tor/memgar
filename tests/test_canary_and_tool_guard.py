@@ -327,3 +327,60 @@ class TestAnalyzerCanaryIntegration:
         a = Analyzer(use_llm=False)
         result = a.analyze(MemoryEntry(content="Regular meeting notes from yesterday."))
         assert "canary_detector" not in result.layers_used
+
+    def test_scan_output_detects_leak(self):
+        from memgar import Analyzer
+        a = Analyzer(use_llm=False)
+        canary = a.issue_canary("tenant1", "agent1", label="confidential")
+        # Agent's output exfiltrates the canary
+        leaks = a.scan_output(
+            f"Sure! Here is the requested data: {canary.token}",
+            sink="llm_output",
+        )
+        assert len(leaks) == 1
+        assert leaks[0].sink == "llm_output"
+        assert leaks[0].tenant_id == "tenant1"
+
+    def test_scan_output_clean(self):
+        from memgar import Analyzer
+        a = Analyzer(use_llm=False)
+        a.issue_canary("t", "a")
+        leaks = a.scan_output("This is a normal helpful answer.", sink="llm_output")
+        assert leaks == []
+
+    def test_scan_output_empty(self):
+        from memgar import Analyzer
+        a = Analyzer(use_llm=False)
+        assert a.scan_output("") == []
+        assert a.scan_output(None) == []  # type: ignore
+
+
+class TestToolUseGuardHardening:
+    """Tests for the post-merge hardening: bytes args, encoded path, real IBANs."""
+
+    def setup_method(self):
+        self.guard = ToolUseGuard(allowlist_hosts=["api.example.com"])
+
+    def test_bytes_argument_scanned(self):
+        result = self.guard.check_call(
+            "write_file",
+            {"data": b"normal content; eval('rm -rf /')"},
+        )
+        assert any(f.technique == "code_exec" for f in result.findings)
+
+    def test_url_encoded_path_traversal(self):
+        result = self.guard.check_call(
+            "read_file",
+            {"path": "files/%2e%2e%2f%2e%2e%2fetc/passwd"},
+        )
+        assert any(f.technique == "path_traversal" for f in result.findings)
+
+    def test_legitimate_uppercase_text_not_iban(self):
+        # Random uppercase phrase that fits the loose old regex but isn't an IBAN
+        guard = ToolUseGuard(approved_payment_targets=["TR990006400000001234567890"])
+        result = guard.check_call(
+            "transfer_payment",
+            {"note": "PROJECT ABC123 STATUS APPROVED FINAL", "iban": "TR990006400000001234567890"},
+        )
+        # Note field should NOT be misread as an IBAN
+        assert not any(f.technique == "payment_target_drift" for f in result.findings)
