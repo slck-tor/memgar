@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.11", "3.14"]
+        python-version: ["3.9", "3.11", "3.13"]
 
     steps:
       - name: Checkout
@@ -38,7 +38,7 @@ jobs:
 
       - name: Mandatory ML tests
         run: |
-          pytest -q \
+          python -m pytest -q \
             tests/test_feature_extractor.py \
             tests/test_ml_detector.py \
             tests/test_ml_integration.py \
@@ -93,7 +93,7 @@ jobs:
         run: python rebuild_model.py
 
       - name: Run full test suite
-        run: pytest -q
+        run: python -m pytest -q
 
   feature-tests:
     name: Feature tests (adversarial, feed, observability)
@@ -121,7 +121,7 @@ jobs:
 
       - name: Run feature tests
         run: |
-          pytest -q \
+          python -m pytest -q \
             tests/test_adversarial.py \
             tests/test_feed.py \
             tests/test_observability.py
