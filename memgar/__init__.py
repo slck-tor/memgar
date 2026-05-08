@@ -98,6 +98,7 @@ from memgar.tool_use_guard import (
     ToolFinding,
     ToolRisk,
 )
+from memgar.similarity_layer import SimilarityLayer, SimilarityResult, get_global_layer
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
