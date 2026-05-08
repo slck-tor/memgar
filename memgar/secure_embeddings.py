@@ -36,6 +36,16 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
+class _EmbeddingUnpickler(pickle.Unpickler):
+    """Allowlist-based unpickler for the embedding index (builtins + this module)."""
+
+    def find_class(self, module: str, name: str):
+        root = module.split(".")[0]
+        if root not in ("builtins", "memgar") and not module.startswith("numpy"):
+            raise pickle.UnpicklingError(f"Forbidden pickle class: {module}.{name}")
+        return super().find_class(module, name)
+
+
 # ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
@@ -419,7 +429,7 @@ class LedgerEmbeddingIndex:
             return False
         try:
             with open(self._path, "rb") as f:
-                self._idx = pickle.load(f)
+                self._idx = _EmbeddingUnpickler(f).load()
             return True
         except Exception:
             return False

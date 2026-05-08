@@ -35,8 +35,8 @@ Usage::
     from memgar.siem import SIEMRouter, SplunkSink, DatadogSink, ElasticSink
 
     router = SIEMRouter()
-    router.add_sink(SplunkSink(url="https://splunk:8088", token="HEC-TOKEN"))
-    router.add_sink(DatadogSink(api_key="DD-API-KEY", site="datadoghq.com"))
+    router.add_sink(SplunkSink(url="https://splunk:8088", token=os.environ["MEMGAR_SPLUNK_HEC_TOKEN"]))
+    router.add_sink(DatadogSink(api_key=os.environ["MEMGAR_DATADOG_API_KEY"], site="datadoghq.com"))
 
     # Route events from any Memgar module
     from memgar import Memgar
