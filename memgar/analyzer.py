@@ -1189,6 +1189,48 @@ class Analyzer:
         """
         self._doc_trust_scores[source_id] = max(0.0, min(1.0, trust_score))
 
+    def scan_output(
+        self,
+        text: str,
+        sink: str = "llm_output",
+    ) -> list[Any]:
+        """Scan an outbound payload for canary token leaks.
+
+        Call this on every agent output (LLM completion, tool argument bundle,
+        outbound HTTP body) to convert canary tokens in memory into provable
+        exfiltration alerts.
+
+        Args:
+            text: outbound text to inspect.
+            sink: label for the destination ("llm_output", "tool_arg",
+                "http_request", etc.) — recorded with each leak.
+
+        Returns:
+            List of CanaryLeak objects (empty if clean).
+        """
+        if self._canary_manager is None or not text:
+            return []
+        try:
+            return self._canary_manager.scan(text, sink=sink)
+        except Exception:
+            return []
+
+    def issue_canary(
+        self,
+        tenant_id: str = "default",
+        agent_id: str = "default",
+        label: str = "",
+    ):
+        """Mint a fresh canary tracer and return it.
+
+        Embed ``canary.token`` in the metadata of any sensitive memory entry.
+        Subsequent calls to :meth:`scan_output` will alert if the agent
+        leaks it to any external sink.
+        """
+        if self._canary_manager is None:
+            raise RuntimeError("CanaryTokenManager not enabled on this Analyzer")
+        return self._canary_manager.issue(tenant_id, agent_id, label=label)
+
     def analyze(self, entry: MemoryEntry) -> AnalysisResult:
         """
         Analyze a memory entry for threats (all 4 layers).
