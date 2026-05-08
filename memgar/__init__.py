@@ -81,6 +81,26 @@ from memgar.correlation_detector import (
 from memgar.ensemble_voter import EnsembleVoter, EnsembleVerdict, LayerScore
 
 # =============================================================================
+# DETECTION LAYERS 8-9 — canary tracers + tool-use guard
+# =============================================================================
+from memgar.canary import (
+    CanaryToken,
+    CanaryLeak,
+    CanaryTokenManager,
+    extract_canaries,
+    is_canary,
+    CANARY_PREFIX,
+)
+from memgar.tool_use_guard import (
+    ToolUseGuard,
+    ToolCheckResult,
+    ToolDecision,
+    ToolFinding,
+    ToolRisk,
+)
+from memgar.similarity_layer import SimilarityLayer, SimilarityResult, get_global_layer
+
+# =============================================================================
 # LAYER 2: SANITIZATION (Always available)
 # =============================================================================
 from memgar.sanitizer import (

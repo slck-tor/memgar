@@ -1036,6 +1036,8 @@ class Analyzer:
         stego_detector: bool = True,
         correlation_detector: bool = True,
         ensemble_voter: bool = True,
+        canary_manager: Any = None,
+        similarity_layer: bool = True,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1138,6 +1140,24 @@ class Analyzer:
             try:
                 from memgar.ensemble_voter import EnsembleVoter
                 self._ensemble_voter = EnsembleVoter()
+            except Exception:
+                pass
+
+        # Layer 2.5: Semantic similarity (sentence-transformers cosine similarity)
+        self._similarity_layer: Any = None
+        if similarity_layer:
+            try:
+                from memgar.similarity_layer import get_global_layer
+                self._similarity_layer = get_global_layer()
+            except Exception:
+                pass
+
+        # Layer 8: Canary token manager (memory exfiltration proof)
+        self._canary_manager: Any = canary_manager
+        if canary_manager is None:
+            try:
+                from memgar.canary import CanaryTokenManager
+                self._canary_manager = CanaryTokenManager()
             except Exception:
                 pass
 
@@ -1412,6 +1432,16 @@ class Analyzer:
                             weight=1.2,
                             reason="ML detector",
                         ))
+                    # Similarity signal (Layer 2.5)
+                    if "similarity_layer" in result.layers_used:
+                        sim_conf = max(
+                            (t.confidence for t in result.threats if t.match_type == "semantic_similarity"),
+                            default=0.70,
+                        )
+                        layer_scores.append(LayerScore(
+                            name="similarity", score=float(sim_conf), weight=1.1,
+                            reason="cosine paraphrase match"
+                        ))
                     # Stego signal
                     if "stego_detector" in result.layers_used:
                         layer_scores.append(LayerScore(
@@ -1460,6 +1490,45 @@ class Analyzer:
                             }
                         except Exception:
                             pass
+                except Exception:
+                    pass
+
+            # Layer 8: Canary detection — scan incoming content for tracer tokens
+            # that prove the agent is being fed content from exfiltrated memory.
+            if self._canary_manager is not None:
+                try:
+                    canary_leaks = self._canary_manager.scan(
+                        entry.content or "", sink="memory_input"
+                    )
+                    if canary_leaks:
+                        from memgar.models import ThreatCategory
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "CANARY-001" not in existing_ids:
+                            canary_threat = ThreatMatch(
+                                threat=Threat(
+                                    id="CANARY-001",
+                                    name="Canary Token Leak",
+                                    description=(
+                                        f"{len(canary_leaks)} canary tracer(s) detected in "
+                                        "memory input — proves prior exfiltration"
+                                    ),
+                                    category=ThreatCategory.EVASION,
+                                    severity=Severity.CRITICAL,
+                                    patterns=[], keywords=[], examples=[],
+                                    mitre_attack="T1056",
+                                ),
+                                matched_text=canary_leaks[0].token,
+                                match_type="canary",
+                                confidence=1.0,
+                                position=(0, 0),
+                            )
+                            result.threats = list(result.threats) + [canary_threat]
+                        result.risk_score = 100
+                        result.layers_used = list(result.layers_used) + ["canary_detector"]
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.explanation = (
+                            f"[CANARY:{len(canary_leaks)} leak(s)] " + result.explanation
+                        )
                 except Exception:
                     pass
 
@@ -1675,6 +1744,44 @@ class Analyzer:
                 if "SEM-001" not in existing_ids:
                     threats.append(sem_threat)
                 layers_used.append("semantic_guard")
+
+        # Layer 2.5: Semantic Similarity (sentence-transformers cosine, ~5-50ms)
+        # Catches paraphrase attacks that evade Layer 1 regex entirely.
+        if self._similarity_layer is not None and self._similarity_layer.available:
+            try:
+                sim_result = self._similarity_layer.score(check_content)
+                if sim_result.score >= self._similarity_layer.threat_threshold:
+                    from memgar.models import ThreatCategory
+                    existing_ids = {t.threat.id for t in threats}
+                    if "SIM-001" not in existing_ids:
+                        top_cat = sim_result.matched_category or "unknown"
+                        top_ex = (sim_result.matched_example or "")[:80]
+                        sim_threat = ThreatMatch(
+                            threat=Threat(
+                                id="SIM-001",
+                                name="Semantic Paraphrase Attack",
+                                description=(
+                                    f"High cosine similarity ({sim_result.score:.2f}) to "
+                                    f"'{top_cat}' attack cluster. "
+                                    f"Closest example: \"{top_ex}\""
+                                ),
+                                category=ThreatCategory.BEHAVIOR,
+                                severity=Severity.HIGH if sim_result.score >= 0.80 else Severity.MEDIUM,
+                                patterns=[], keywords=[], examples=[],
+                                mitre_attack="T1656",
+                            ),
+                            matched_text=check_content[:120],
+                            match_type="semantic_similarity",
+                            confidence=round(sim_result.score, 3),
+                            position=(0, min(len(check_content), 120)),
+                        )
+                        threats.append(sim_threat)
+                    layers_used.append("similarity_layer")
+                elif sim_result.score >= self._similarity_layer.quarantine_threshold:
+                    # Elevated but not blocking — just note it for ensemble voter
+                    layers_used.append("similarity_layer_elevated")
+            except Exception:
+                pass
 
         # Layer 2-ML: Transformer inference (ONNX, ~5ms — no API call)
         # High confidence (≥threshold) → add ML-DETECT threat and boost risk score.
