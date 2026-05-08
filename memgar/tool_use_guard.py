@@ -33,7 +33,6 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
-from urllib.parse import urlparse
 
 from .canary import extract_canaries
 
@@ -94,7 +93,10 @@ _DANGEROUS_PATTERNS: List[tuple] = [
     ("shell_metachars", re.compile(
         r"(?:\$\([^)]+\)|`[^`]+`|\|\s*(?:sh|bash|zsh|nc|curl|wget)\b)",
     )),
-    ("path_traversal", re.compile(r"\.\./{1,}|\.\.\\")),
+    ("path_traversal", re.compile(
+        # Plain ../  .. \\  plus URL-encoded variants (%2e%2e%2f, %2e%2e/, etc.)
+        r"\.\./{1,}|\.\.\\+|(?:%2e|%2E){2}(?:%2f|%2F|%5c|%5C)",
+    )),
     ("ssrf_localhost", re.compile(
         r"\b(?:127\.0\.0\.1|localhost|0\.0\.0\.0|::1|169\.254\.169\.254)\b",
         re.IGNORECASE,
@@ -281,6 +283,11 @@ class ToolUseGuard:
             for sub_key, sub_val in value.items():
                 self._scan_value(f"{key}.{sub_key}", sub_val, result, tool_name)
             return
+        if isinstance(value, (bytes, bytearray)):
+            try:
+                value = value.decode("utf-8", errors="replace")
+            except Exception:
+                return
         if not isinstance(value, str):
             return  # numbers, bools, etc. — nothing to scan textually
 
@@ -383,12 +390,24 @@ class ToolUseGuard:
 
     @staticmethod
     def _extract_payment_target(text: str) -> Optional[str]:
-        # IBAN: country code + 2 digits + up to 30 alnum
-        iban = re.search(r"\b[A-Z]{2}\d{2}[A-Z0-9 ]{10,30}\b", text)
-        if iban:
-            return iban.group(0).replace(" ", "").upper()
-        # Crypto wallet (BTC bech32 or ETH 0x..)
-        wallet = re.search(r"\b(?:bc1[0-9a-z]{20,}|0x[0-9a-fA-F]{40})\b", text)
+        # IBAN: country code + 2 digits + 11..30 alnum (+ optional spaces).
+        # Total length after stripping spaces must be 15..34 per ISO 13616.
+        iban_re = re.compile(
+            r"\b([A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30})\b"
+        )
+        for match in iban_re.finditer(text):
+            candidate = match.group(1).replace(" ", "").upper()
+            if 15 <= len(candidate) <= 34:
+                return candidate
+        # Crypto wallet (BTC bech32, BTC legacy P2PKH/P2SH, or ETH 0x..)
+        wallet = re.search(
+            r"\b(?:"
+            r"bc1[0-9a-z]{25,87}"               # BTC bech32
+            r"|[13][1-9A-HJ-NP-Za-km-z]{25,34}"  # BTC base58 P2PKH/P2SH
+            r"|0x[0-9a-fA-F]{40}"                # ETH-style
+            r")\b",
+            text,
+        )
         if wallet:
             return wallet.group(0).upper()
         return None
