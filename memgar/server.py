@@ -152,7 +152,16 @@ except ImportError:
 class _RateLimiter:
     """Per-key sliding-window rate limiter backed by in-memory buckets."""
 
-    def __init__(self, default_rpm: int = 60) -> None:
+    def __init__(
+        self,
+        default_rpm: int = 60,
+        *,
+        requests_per_minute: Optional[int] = None,
+    ) -> None:
+        # ``requests_per_minute`` is the public alias used by tests / older
+        # callers; ``default_rpm`` is the internal name kept for compatibility.
+        if requests_per_minute is not None:
+            default_rpm = requests_per_minute
         self._default_rpm = default_rpm
         self._window = 60.0
         self._buckets: Dict[str, List[float]] = {}
