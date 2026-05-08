@@ -1033,6 +1033,9 @@ class Analyzer:
         use_transformer_ml: bool = True,
         integrity_store: Any = None,
         brand_bias_detector: Any = None,
+        stego_detector: bool = True,
+        correlation_detector: bool = True,
+        ensemble_voter: bool = True,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1110,7 +1113,34 @@ class Analyzer:
                     logger.info("Analyzer: transformer backend ready (%s)", det._backend)
             except Exception:
                 pass
-    
+
+        # Layer 5: Steganography detector (Unicode covert channels)
+        self._stego_detector: Any = None
+        if stego_detector:
+            try:
+                from memgar.stego_detector import StegoDetector
+                self._stego_detector = StegoDetector()
+            except Exception:
+                pass
+
+        # Layer 6: Cross-entry correlation detector (multi-step attacks)
+        self._correlation_detector: Any = None
+        if correlation_detector:
+            try:
+                from memgar.correlation_detector import CorrelationDetector
+                self._correlation_detector = CorrelationDetector()
+            except Exception:
+                pass
+
+        # Layer 7: Ensemble voter (adversarial robustness)
+        self._ensemble_voter: Any = None
+        if ensemble_voter:
+            try:
+                from memgar.ensemble_voter import EnsembleVoter
+                self._ensemble_voter = EnsembleVoter()
+            except Exception:
+                pass
+
     def _compile_patterns(self) -> None:
         """Pre-compile all regex patterns and pre-warm keyword cache."""
         for threat in self.patterns:
@@ -1268,6 +1298,168 @@ class Analyzer:
                         result.metadata["bias_report"] = bias_report  # type: ignore[attr-defined]
                     except Exception:
                         pass
+                except Exception:
+                    pass
+
+            # Layer 5: Steganography detector (Unicode covert channels)
+            if self._stego_detector is not None:
+                try:
+                    stego_report = self._stego_detector.analyze(entry.content or "")
+                    if stego_report.detected and stego_report.risk_boost > 0:
+                        from memgar.models import ThreatCategory
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "STEGO-001" not in existing_ids:
+                            stego_threat = ThreatMatch(
+                                threat=Threat(
+                                    id="STEGO-001",
+                                    name="Steganographic Covert Channel",
+                                    description=stego_report.summary,
+                                    category=ThreatCategory.EVASION,
+                                    severity=Severity.HIGH if stego_report.risk_boost >= 25 else Severity.MEDIUM,
+                                    patterns=[], keywords=[], examples=[],
+                                    mitre_attack="T1027",
+                                ),
+                                matched_text=(stego_report.findings[0].sample if stego_report.findings else "")[:120],
+                                match_type="steganography",
+                                confidence=min(1.0, stego_report.risk_boost / 40.0),
+                                position=(0, 0),
+                            )
+                            result.threats = list(result.threats) + [stego_threat]
+                        result.risk_score = min(100, result.risk_score + stego_report.risk_boost)
+                        result.layers_used = list(result.layers_used) + ["stego_detector"]
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.explanation = f"[STEGO:{len(stego_report.findings)}] " + result.explanation
+
+                        # Re-scan cleaned content — invisibles removed may now reveal pattern
+                        if stego_report.cleaned_content and stego_report.cleaned_content != (entry.content or ""):
+                            try:
+                                normalized = self._stego_detector.normalize(entry.content or "")
+                                hidden_threats = self._layer1_pattern_matching(normalized)
+                                new_threats = [t for t in hidden_threats if t.threat.id not in {x.threat.id for x in result.threats}]
+                                if new_threats:
+                                    result.threats = list(result.threats) + new_threats
+                                    result.risk_score = min(100, result.risk_score + 15)
+                                    result.decision = self._make_decision(result.threats, result.risk_score)
+                                    result.explanation = "[STEGO:revealed] " + result.explanation
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            # Layer 6: Cross-entry correlation (multi-step attacks)
+            if self._correlation_detector is not None:
+                try:
+                    agent_id = (entry.metadata or {}).get("agent_id", "default")
+                    src_trust = self._doc_trust_scores.get(entry.source_id or "", 0.5)
+                    corr_report = self._correlation_detector.observe_and_check(
+                        agent_id=agent_id,
+                        content=entry.content or "",
+                        source_id=entry.source_id,
+                        source_trust=src_trust,
+                        standalone_risk_score=result.risk_score,
+                    )
+                    # Only boost when current entry has its own signal — otherwise
+                    # benign content gets penalised for unrelated history (same
+                    # principle as Layer 4 behavioral baseline).
+                    if corr_report.detected and corr_report.risk_boost > 0 and result.risk_score > 0:
+                        from memgar.models import ThreatCategory
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "CORR-001" not in existing_ids:
+                            corr_threat = ThreatMatch(
+                                threat=Threat(
+                                    id="CORR-001",
+                                    name="Cross-Entry Correlation Attack",
+                                    description=corr_report.summary,
+                                    category=ThreatCategory.BEHAVIOR,
+                                    severity=Severity.HIGH if corr_report.risk_boost >= 20 else Severity.MEDIUM,
+                                    patterns=[], keywords=[], examples=[],
+                                    mitre_attack="T1656",
+                                ),
+                                matched_text=corr_report.summary[:120],
+                                match_type="correlation",
+                                confidence=min(1.0, corr_report.risk_boost / 35.0),
+                                position=(0, 0),
+                            )
+                            result.threats = list(result.threats) + [corr_threat]
+                        result.risk_score = min(100, result.risk_score + corr_report.risk_boost)
+                        result.layers_used = list(result.layers_used) + ["correlation_detector"]
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.explanation = f"[CORR:{len(corr_report.findings)}] " + result.explanation
+                except Exception:
+                    pass
+
+            # Layer 7: Ensemble voter — agreement boost / disagreement escalation
+            if self._ensemble_voter is not None:
+                try:
+                    from memgar.ensemble_voter import LayerScore
+                    layer_scores: list[LayerScore] = []
+                    # Layer 1 pattern signal
+                    if result.threats:
+                        max_pat_conf = max(
+                            (t.confidence for t in result.threats if t.match_type in ("regex", "keyword")),
+                            default=0.0,
+                        )
+                        if max_pat_conf > 0:
+                            layer_scores.append(LayerScore(
+                                name="pattern", score=float(max_pat_conf), weight=1.0,
+                                reason=f"{len(result.threats)} pattern hit(s)"
+                            ))
+                    # Transformer ML signal — re-derive from risk_score if we used it
+                    if "transformer_ml" in result.layers_used:
+                        layer_scores.append(LayerScore(
+                            name="transformer_ml",
+                            score=min(1.0, result.risk_score / 100.0),
+                            weight=1.2,
+                            reason="ML detector",
+                        ))
+                    # Stego signal
+                    if "stego_detector" in result.layers_used:
+                        layer_scores.append(LayerScore(
+                            name="stego", score=0.85, weight=0.8,
+                            reason="covert channel"
+                        ))
+                    # Correlation signal
+                    if "correlation_detector" in result.layers_used:
+                        layer_scores.append(LayerScore(
+                            name="correlation", score=0.8, weight=0.9,
+                            reason="multi-entry pattern"
+                        ))
+                    # Behavioral baseline signal
+                    if "behavioral_baseline" in result.layers_used:
+                        layer_scores.append(LayerScore(
+                            name="behavioral", score=0.7, weight=0.7,
+                            reason="agent deviation"
+                        ))
+
+                    if len(layer_scores) >= 2:
+                        verdict = self._ensemble_voter.vote(layer_scores)
+                        if verdict.risk_boost > 0:
+                            result.risk_score = min(100, result.risk_score + verdict.risk_boost)
+                            result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.layers_used = list(result.layers_used) + ["ensemble_voter"]
+                        if verdict.escalate_to_llm and not self.use_llm:
+                            result.explanation = (
+                                f"[ENSEMBLE:agree={verdict.agreement_count} "
+                                f"conf={verdict.confidence:.2f}] " + result.explanation
+                            )
+                        else:
+                            result.explanation = (
+                                f"[ENSEMBLE:agree={verdict.agreement_count}] "
+                                + result.explanation
+                            )
+                        if not hasattr(result, "metadata") or result.metadata is None:
+                            result.metadata = {}  # type: ignore[attr-defined]
+                        try:
+                            result.metadata["ensemble_verdict"] = {  # type: ignore[attr-defined]
+                                "final_score": verdict.final_score,
+                                "confidence": verdict.confidence,
+                                "agreement_count": verdict.agreement_count,
+                                "disagreement": verdict.disagreement,
+                                "escalate_to_llm": verdict.escalate_to_llm,
+                                "rationale": verdict.rationale,
+                            }
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 

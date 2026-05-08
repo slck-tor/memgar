@@ -70,6 +70,17 @@ from memgar.tenants import TenantStore, Tenant, ApiKey, PLAN_LIMITS
 from memgar.brand_bias import BrandBiasDetector, BrandMention, BiasReport, extract_brand_mentions
 
 # =============================================================================
+# ADVANCED DETECTION LAYERS 5-7
+# =============================================================================
+from memgar.stego_detector import StegoDetector, StegoReport, StegoFinding
+from memgar.correlation_detector import (
+    CorrelationDetector,
+    CorrelationReport,
+    CorrelationFinding,
+)
+from memgar.ensemble_voter import EnsembleVoter, EnsembleVerdict, LayerScore
+
+# =============================================================================
 # LAYER 2: SANITIZATION (Always available)
 # =============================================================================
 from memgar.sanitizer import (
