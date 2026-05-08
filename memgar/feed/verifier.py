@@ -8,9 +8,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 # The 32-byte Ed25519 public key, base64-encoded.
-# Generated 2026-04-26. To rotate: run scripts/publish_feed.py with a new key
+# Generated 2026-05-08. To rotate: run scripts/publish_feed.py with a new key
 # and update this constant before publishing the new release.
-FEED_PUBLIC_KEY_B64: str = "JmaBUCL+dHiKi4JzFmBkl954qXDZLnkREQhwCPPD4ww="
+FEED_PUBLIC_KEY_B64: str = "svUbSCEx9iZX9KYE04YmuTsIh2i3K+IWp8zv4zPmA+4="
 
 
 class FeedSignatureError(Exception):
