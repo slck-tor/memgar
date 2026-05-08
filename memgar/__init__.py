@@ -67,6 +67,7 @@ from memgar.hunter import MemoryHunter, HunterStats, start_hunter
 from memgar.memory_store import MemoryStore, PersistentMemoryStore, bulk_scan
 from memgar.memory_integrity import MemoryIntegrityStore, MemorySnapshot, IntegrityViolation
 from memgar.tenants import TenantStore, Tenant, ApiKey, PLAN_LIMITS
+from memgar.brand_bias import BrandBiasDetector, BrandMention, BiasReport, extract_brand_mentions
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -1089,4 +1090,16 @@ __all__ = [
     "DeviationLevel",
     "DeviationReport",
     "BaselineIntegration",
+
+    # Brand Bias Detection (v0.5.7)
+    "BrandBiasDetector",
+    "BrandMention",
+    "BiasReport",
+    "extract_brand_mentions",
+
+    # Multi-tenant key management
+    "TenantStore",
+    "Tenant",
+    "ApiKey",
+    "PLAN_LIMITS",
 ]

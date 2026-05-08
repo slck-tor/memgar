@@ -1032,6 +1032,7 @@ class Analyzer:
         context_buffer: bool = True,
         use_transformer_ml: bool = True,
         integrity_store: Any = None,
+        brand_bias_detector: Any = None,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1091,6 +1092,9 @@ class Analyzer:
 
         # Memory Integrity: snapshot + verify + rollback (OWASP Agent Memory Guard)
         self._integrity_store: Any = integrity_store
+
+        # Brand Bias Detector (Layer 4 extension for e-commerce / recommendation agents)
+        self._brand_bias_detector: Any = brand_bias_detector
 
         # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for high-confidence cases)
         self._transformer: Any = None
@@ -1218,6 +1222,52 @@ class Analyzer:
                         l4.set_attribute("memgar.l4.risk_delta", boost)
                     else:
                         l4.set_attribute("memgar.l4.risk_delta", 0)
+                except Exception:
+                    pass
+
+            # Layer 4 extension: Brand Bias Detection
+            if self._brand_bias_detector is not None:
+                try:
+                    agent_id = (entry.metadata or {}).get("agent_id", "default")
+                    bias_report = self._brand_bias_detector.record_and_check(
+                        entry.content or "", agent_id
+                    )
+                    if bias_report.is_biased and bias_report.risk_boost > 0:
+                        from memgar.models import ThreatCategory
+                        bias_threat = ThreatMatch(
+                            threat=Threat(
+                                id="BRAND-BIAS-DET",
+                                name="Persistent Brand Bias Detected",
+                                description=(
+                                    f"Agent '{agent_id}' shows {bias_report.dominance_ratio:.0%} "
+                                    f"bias toward '{bias_report.dominant_brand}' "
+                                    f"(entropy={bias_report.entropy:.2f})"
+                                ),
+                                category=ThreatCategory.MANIPULATION,
+                                severity=Severity.HIGH if bias_report.risk_boost >= 30 else Severity.MEDIUM,
+                                patterns=[],
+                                keywords=[],
+                                examples=[],
+                                mitre_attack="T1656",
+                            ),
+                            matched_text=(entry.content or "")[:120],
+                            match_type="brand_bias",
+                            confidence=round(bias_report.dominance_ratio, 3),
+                            position=(0, min(len(entry.content or ""), 120)),
+                        )
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "BRAND-BIAS-DET" not in existing_ids:
+                            result.threats = list(result.threats) + [bias_threat]
+                        result.risk_score = min(100, result.risk_score + bias_report.risk_boost)
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.layers_used = list(result.layers_used) + ["brand_bias_detector"]
+                        result.explanation = f"[BRAND-BIAS:{bias_report.dominant_brand}] " + result.explanation
+                    if not hasattr(result, "metadata") or result.metadata is None:
+                        result.metadata = {}  # type: ignore[attr-defined]
+                    try:
+                        result.metadata["bias_report"] = bias_report  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
