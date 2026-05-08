@@ -668,6 +668,74 @@ def stats() -> None:
 
 
 @main.command()
+@click.option("--upstream", default="https://api.anthropic.com",
+              help="Upstream LLM provider base URL")
+@click.option("--host", default="0.0.0.0", help="Bind host")
+@click.option("--port", default=8080, type=int, help="Bind port")
+@click.option("--use-llm/--no-llm", default=False, help="Enable Layer 2 LLM analysis")
+@click.option("--block-risk", default=70, type=int,
+              help="Risk score threshold to block requests (0-100)")
+@click.option("--sanitize-risk", default=40, type=int,
+              help="Risk score threshold to sanitise requests (0-100)")
+def gateway(upstream: str, host: str, port: int, use_llm: bool,
+            block_risk: int, sanitize_risk: int) -> None:
+    """Run the Memgar AI Gateway — drop-in reverse proxy with enforcement.
+
+    Example:
+
+        memgar gateway --upstream https://api.openai.com --port 8080
+
+    Then point your agent at ``http://localhost:8080`` instead of OpenAI;
+    every request and response will pass through Memgar's 9-layer pipeline.
+    """
+    print_banner()
+    console.print(
+        f"\n[bold cyan]🛡  Memgar Gateway[/bold cyan]\n"
+        f"  upstream: {upstream}\n"
+        f"  binding:  http://{host}:{port}\n"
+        f"  block ≥{block_risk}, sanitize ≥{sanitize_risk}, LLM={'on' if use_llm else 'off'}\n"
+    )
+    try:
+        from memgar.gateway.app import run as run_gateway
+    except ImportError as exc:
+        console.print(f"[red]Gateway requires fastapi+uvicorn+httpx: {exc}[/red]")
+        return
+    run_gateway(
+        host=host, port=port, upstream=upstream,
+        use_llm=use_llm,
+        block_risk_score=block_risk,
+        sanitize_risk_score=sanitize_risk,
+    )
+
+
+@main.command(name="mcp-proxy")
+@click.argument("upstream", nargs=-1, required=True)
+def mcp_proxy(upstream: tuple) -> None:
+    """Run an MCP-server proxy that mediates JSON-RPC over stdio.
+
+    USAGE:
+        memgar mcp-proxy -- npx @some/mcp-server arg1 arg2
+
+    Memgar wraps the upstream MCP server: every tool list / call / result
+    flows through the gateway's enforcement layers.
+    """
+    import asyncio
+
+    if not upstream:
+        console.print("[red]Provide an upstream MCP server command after --[/red]")
+        return
+
+    try:
+        from memgar.gateway.mcp_proxy import MCPProxy, run_stdio_proxy
+    except ImportError as exc:
+        console.print(f"[red]MCP proxy unavailable: {exc}[/red]")
+        return
+    proxy = MCPProxy()
+    rc = asyncio.run(run_stdio_proxy(list(upstream), proxy=proxy))
+    raise SystemExit(rc)
+
+
+@main.command()
 def demo() -> None:
     """Run a demonstration of Memgar capabilities."""
     print_banner()
