@@ -158,6 +158,10 @@ local_config.json
 secrets.json
 .env.local
 
+# Feed signing key — NEVER commit this
+feed_private.pem
+*.pem
+
 # Performance profiling
 *.prof
 *.lprof
