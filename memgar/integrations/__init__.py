@@ -5,6 +5,7 @@ Memgar Framework Integrations
 Agent framework and RAG integrations for Memgar.
 
 Agent Frameworks:
+    - Universal: UniversalMemoryGuard for any memory read/write callable
     - LangChain: MemgarMemoryGuard, MemgarCallbackHandler
     - CrewAI: MemgarCrewGuard, secure_crew, secure_agent
     - AutoGen: MemgarAutoGenGuard
@@ -16,15 +17,27 @@ RAG Frameworks:
     - LlamaIndex: MemgarRetriever, create_secure_query_engine
 
 Usage:
-    from memgar.integrations import MemgarMemoryGuard
-    
-    # Wrap LangChain memory
-    memory = MemgarMemoryGuard(ConversationBufferMemory())
+    from memgar.integrations import UniversalMemoryGuard
+
+    guard = UniversalMemoryGuard()
+    safe_save = guard.wrap_writer(memory.save)
 """
 
 # =============================================================================
 # AGENT FRAMEWORK INTEGRATIONS
 # =============================================================================
+
+# Universal framework-neutral integration, always available.
+from .universal import (
+    MemoryBlockedError,
+    MemoryOperation,
+    MemoryProtectionResult,
+    UniversalMemoryGuard,
+    guard_agent_memory,
+    secure_memory_writer,
+)
+
+UNIVERSAL_AVAILABLE = True
 
 # LangChain Agent Integration
 LANGCHAIN_AGENT_AVAILABLE = False
@@ -147,12 +160,13 @@ def get_available_integrations() -> dict:
     """Get status of all available integrations."""
     return {
         # Agent frameworks
+        "universal": UNIVERSAL_AVAILABLE,
         "langchain_agent": LANGCHAIN_AGENT_AVAILABLE,
         "crewai": CREWAI_AVAILABLE,
         "autogen": AUTOGEN_AVAILABLE,
         "openai_assistants": OPENAI_ASSISTANTS_AVAILABLE,
         "mcp": MCP_AVAILABLE,
-        
+
         # RAG frameworks
         "langchain_rag": LANGCHAIN_RAG_AVAILABLE,
         "llamaindex": LLAMAINDEX_AVAILABLE,
@@ -162,20 +176,21 @@ def get_available_integrations() -> dict:
 def list_integrations() -> None:
     """Print available integrations."""
     status = get_available_integrations()
-    
+
     print("Memgar Integrations Status:")
     print("-" * 40)
-    
+
     print("\nAgent Frameworks:")
-    print(f"  LangChain Agent:    {'✅' if status['langchain_agent'] else '❌ (pip install langchain)'}")
-    print(f"  CrewAI:             {'✅' if status['crewai'] else '❌ (pip install crewai)'}")
-    print(f"  AutoGen:            {'✅' if status['autogen'] else '❌ (pip install pyautogen)'}")
-    print(f"  OpenAI Assistants:  {'✅' if status['openai_assistants'] else '❌ (pip install openai)'}")
-    print(f"  MCP:                {'✅' if status['mcp'] else '❌'}")
-    
+    print("  Universal:         available")
+    print(f"  LangChain Agent:    {'available' if status['langchain_agent'] else 'missing (pip install langchain)'}")
+    print(f"  CrewAI:             {'available' if status['crewai'] else 'missing (pip install crewai)'}")
+    print(f"  AutoGen:            {'available' if status['autogen'] else 'missing (pip install pyautogen)'}")
+    print(f"  OpenAI Assistants:  {'available' if status['openai_assistants'] else 'missing (pip install openai)'}")
+    print(f"  MCP:                {'available' if status['mcp'] else 'missing'}")
+
     print("\nRAG Frameworks:")
-    print(f"  LangChain RAG:      {'✅' if status['langchain_rag'] else '❌ (pip install langchain)'}")
-    print(f"  LlamaIndex:         {'✅' if status['llamaindex'] else '❌ (pip install llama-index)'}")
+    print(f"  LangChain RAG:      {'available' if status['langchain_rag'] else 'missing (pip install langchain)'}")
+    print(f"  LlamaIndex:         {'available' if status['llamaindex'] else 'missing (pip install llama-index)'}")
 
 
 # =============================================================================
@@ -186,8 +201,9 @@ __all__ = [
     # Status functions
     "get_available_integrations",
     "list_integrations",
-    
+
     # Availability flags
+    "UNIVERSAL_AVAILABLE",
     "LANGCHAIN_AGENT_AVAILABLE",
     "CREWAI_AVAILABLE",
     "AUTOGEN_AVAILABLE",
@@ -195,26 +211,34 @@ __all__ = [
     "MCP_AVAILABLE",
     "LANGCHAIN_RAG_AVAILABLE",
     "LLAMAINDEX_AVAILABLE",
-    
+
+    # Universal adapter
+    "UniversalMemoryGuard",
+    "MemoryProtectionResult",
+    "MemoryBlockedError",
+    "MemoryOperation",
+    "guard_agent_memory",
+    "secure_memory_writer",
+
     # LangChain Agent
     "MemgarMemoryGuard",
     "MemgarCallbackHandler",
     "SecureConversationChain",
-    
+
     # CrewAI
     "MemgarCrewGuard",
     "secure_crew",
     "secure_agent",
-    
+
     # AutoGen
     "MemgarAutoGenGuard",
-    
+
     # OpenAI Assistants
     "MemgarAssistantGuard",
-    
+
     # MCP
     "MemgarMCPGuard",
-    
+
     # LangChain RAG
     "LangChainMemgarRetriever",
     "MemgarVectorStoreRetriever",
@@ -222,7 +246,7 @@ __all__ = [
     "create_secure_rag_chain",
     "create_secure_conversational_chain",
     "sync_metadata_to_retriever",
-    
+
     # LlamaIndex
     "LlamaIndexMemgarRetriever",
     "MemgarNodePostprocessor",
