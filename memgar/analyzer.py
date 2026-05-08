@@ -1036,6 +1036,7 @@ class Analyzer:
         stego_detector: bool = True,
         correlation_detector: bool = True,
         ensemble_voter: bool = True,
+        canary_manager: Any = None,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1138,6 +1139,15 @@ class Analyzer:
             try:
                 from memgar.ensemble_voter import EnsembleVoter
                 self._ensemble_voter = EnsembleVoter()
+            except Exception:
+                pass
+
+        # Layer 8: Canary token manager (memory exfiltration proof)
+        self._canary_manager: Any = canary_manager
+        if canary_manager is None:
+            try:
+                from memgar.canary import CanaryTokenManager
+                self._canary_manager = CanaryTokenManager()
             except Exception:
                 pass
 
@@ -1460,6 +1470,45 @@ class Analyzer:
                             }
                         except Exception:
                             pass
+                except Exception:
+                    pass
+
+            # Layer 8: Canary detection — scan incoming content for tracer tokens
+            # that prove the agent is being fed content from exfiltrated memory.
+            if self._canary_manager is not None:
+                try:
+                    canary_leaks = self._canary_manager.scan(
+                        entry.content or "", sink="memory_input"
+                    )
+                    if canary_leaks:
+                        from memgar.models import ThreatCategory
+                        existing_ids = {t.threat.id for t in result.threats}
+                        if "CANARY-001" not in existing_ids:
+                            canary_threat = ThreatMatch(
+                                threat=Threat(
+                                    id="CANARY-001",
+                                    name="Canary Token Leak",
+                                    description=(
+                                        f"{len(canary_leaks)} canary tracer(s) detected in "
+                                        "memory input — proves prior exfiltration"
+                                    ),
+                                    category=ThreatCategory.EVASION,
+                                    severity=Severity.CRITICAL,
+                                    patterns=[], keywords=[], examples=[],
+                                    mitre_attack="T1056",
+                                ),
+                                matched_text=canary_leaks[0].token,
+                                match_type="canary",
+                                confidence=1.0,
+                                position=(0, 0),
+                            )
+                            result.threats = list(result.threats) + [canary_threat]
+                        result.risk_score = 100
+                        result.layers_used = list(result.layers_used) + ["canary_detector"]
+                        result.decision = self._make_decision(result.threats, result.risk_score)
+                        result.explanation = (
+                            f"[CANARY:{len(canary_leaks)} leak(s)] " + result.explanation
+                        )
                 except Exception:
                     pass
 
