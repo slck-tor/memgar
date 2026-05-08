@@ -1,8 +1,7 @@
 """Framework-neutral memory guard adapter.
 
-This module gives any agent framework a small, dependency-free surface for
-protecting memory writes and reads. Framework-specific adapters can keep their
-custom behavior, while unknown or home-grown agents can wrap plain callables.
+UniversalMemoryGuard protects arbitrary agent memory callables without depending
+on LangChain, CrewAI, AutoGen, OpenAI Agents, MCP, or a specific vector store.
 """
 
 from __future__ import annotations
@@ -42,7 +41,6 @@ class MemoryProtectionResult:
 
     @property
     def safe_content(self) -> Any:
-        """Content that should be passed to the wrapped memory operation."""
         return self.content
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,13 +63,11 @@ class MemoryBlockedError(Exception):
 
 
 class UniversalMemoryGuard:
-    """Protect arbitrary agent memory callables without framework dependencies.
+    """Protect arbitrary agent memory read/write callables.
 
-    The adapter is intentionally small: wrap a memory writer, wrap a memory
-    reader, or call ``guard_write`` / ``guard_read`` directly. This lets Memgar
-    sit in front of custom agents, OpenAI Agents SDK callbacks, MCP tools, vector
-    stores, task queues, and framework adapters that do not yet have first-class
-    Memgar integrations.
+    This adapter gives custom agents and not-yet-supported frameworks the same
+    memory-poisoning guard surface: wrap a writer, wrap a reader, or call
+    guard_write/guard_read directly.
     """
 
     BLOCK_ACTIONS = {"block", "raise", "human_review"}
@@ -113,7 +109,7 @@ class UniversalMemoryGuard:
         )
 
     def guard_write(self, content: Any, **context: Any) -> Any:
-        """Return safe write content or raise ``MemoryBlockedError``."""
+        """Return safe write content or raise MemoryBlockedError."""
         return self.protect_write(content, **context).safe_content
 
     def guard_read(self, content: Any, **context: Any) -> Any:
@@ -171,22 +167,16 @@ class UniversalMemoryGuard:
 
         return wrapper
 
-    def wrap_reader(
-        self,
-        reader: Callable[..., Any],
-        *,
-        **context: Any,
-    ) -> Callable[..., Any]:
+    def wrap_reader(self, reader: Callable[..., Any], **context: Any) -> Callable[..., Any]:
         """Wrap a sync memory-read callable and filter retrieved content."""
 
         @wraps(reader)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            result = reader(*args, **kwargs)
-            return self.guard_read_results(result, **context)
+            return self.guard_read_results(reader(*args, **kwargs), **context)
 
         return wrapper
 
-    def wrap_async_reader(self, reader: Callable[..., Any], *, **context: Any) -> Callable[..., Any]:
+    def wrap_async_reader(self, reader: Callable[..., Any], **context: Any) -> Callable[..., Any]:
         """Wrap an async or awaitable memory-read callable."""
 
         @wraps(reader)
@@ -207,25 +197,17 @@ class UniversalMemoryGuard:
         content_kw: Optional[str] = None,
         **context: Any,
     ) -> Any:
-        """Patch ``target.method_name`` in place and return the target."""
+        """Patch target.method_name in place and return the target."""
         method = getattr(target, method_name)
-        wrapped = self.wrap_writer(
-            method,
-            content_arg=content_arg,
-            content_kw=content_kw,
-            **context,
+        setattr(
+            target,
+            method_name,
+            self.wrap_writer(method, content_arg=content_arg, content_kw=content_kw, **context),
         )
-        setattr(target, method_name, wrapped)
         return target
 
     def guard_read_results(self, records: Any, **context: Any) -> Any:
-        """Filter common memory-read return shapes.
-
-        Strings are scanned directly. Lists and tuples are filtered item by item.
-        Dicts with a ``content`` field are copied with sanitized content when
-        possible. Unknown object shapes are returned as-is after scanning their
-        textual representation, preserving framework compatibility.
-        """
+        """Filter common memory-read return shapes."""
         if isinstance(records, str):
             return self.guard_read(records, **context)
         if isinstance(records, tuple):
@@ -301,14 +283,17 @@ class UniversalMemoryGuard:
         source_type = context.pop("source_type", self.default_source_type)
         source_id = context.pop("source_id", self.default_source_id)
         text = self._to_text(content)
+        metadata = {"operation": operation.value, **context}
         raw_result = self.guard.process(
             text,
             source_type=source_type,
             source_id=source_id,
-            custom_metadata={"operation": operation.value, **context} if context else {"operation": operation.value},
+            custom_metadata=metadata,
         )
         decision = self._decision_value(getattr(raw_result, "decision", "allow"))
-        allowed = bool(getattr(raw_result, "allowed", False))
+        allowed = bool(
+            getattr(raw_result, "allowed", decision in {"allow", "allow_sanitized", "sanitize"})
+        )
         safe_text = getattr(raw_result, "safe_content", text) if allowed else ""
         protected = MemoryProtectionResult(
             allowed=allowed,
@@ -329,7 +314,10 @@ class UniversalMemoryGuard:
         on_threat: str,
     ) -> MemoryProtectionResult:
         action = (on_threat or "block").lower()
-        if result.allowed or action in self.PASS_ACTIONS:
+        if result.allowed:
+            return result
+        if action in self.PASS_ACTIONS:
+            result.content = result.original_content
             return result
         if action in self.DROP_ACTIONS:
             result.content = ""
