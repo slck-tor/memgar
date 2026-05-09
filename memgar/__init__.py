@@ -99,6 +99,16 @@ from memgar.tool_use_guard import (
     ToolRisk,
 )
 from memgar.similarity_layer import SimilarityLayer, SimilarityResult, get_global_layer
+from memgar.runtime import (
+    MemoryRuntimeEnforcer,
+    EnforcementResult,
+    ChunkResult,
+    EnforcedBoundary,
+    EnforcementAction,
+    RuntimePolicy,
+    ThreatInfo,
+    MemoryPoisoningError,
+)
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)

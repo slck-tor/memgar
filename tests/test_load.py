@@ -76,8 +76,13 @@ ALL_PAYLOADS = BENIGN_PAYLOADS + ATTACK_PAYLOADS
 
 @pytest.fixture(scope="module")
 def analyzer():
-    """Single Analyzer instance, Layer 1 only (use_llm=False, no transformer ML)."""
-    return Analyzer(use_llm=False, use_transformer_ml=False)
+    """Single Analyzer instance, Layer 1+3+4 only — no ML/embedding layers.
+
+    similarity_layer=False disables sentence-transformer inference so the
+    throughput gate measures pattern-matching + scoring overhead, not GPU/CPU
+    embedding time (the embedding layer has its own latency tests).
+    """
+    return Analyzer(use_llm=False, use_transformer_ml=False, similarity_layer=False)
 
 
 def _make_entries(count: int) -> List[MemoryEntry]:
