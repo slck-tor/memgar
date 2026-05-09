@@ -20,18 +20,32 @@ server**.
 
 Provided modules
 ----------------
-* ``app``        — FastAPI application (importable + ``memgar gateway`` CLI)
-* ``policy``     — InputPolicy / OutputPolicy / GatewayPolicy
-* ``providers``  — OpenAI- and Anthropic-compatible endpoints with
+* ``app``        - FastAPI application (importable + ``memgar gateway`` CLI)
+* ``policy``     - InputPolicy / OutputPolicy / GatewayPolicy
+* ``providers``  - OpenAI- and Anthropic-compatible endpoints with
                    streaming (SSE) support
-* ``mcp_proxy``  — wraps any MCP server with tool-call enforcement
-* ``streaming``  — line-buffered SSE filter that also scans deltas
+* ``mcp_proxy``  - wraps any MCP server with tool-call enforcement
+* ``streaming``  - line-buffered SSE filter that also scans deltas
 """
 
 from __future__ import annotations
 
 from .policy import GatewayPolicy, InputPolicy, OutputPolicy, PolicyDecision
-from .app import create_app, run
+
+
+def create_app(*args, **kwargs):
+    """Create the FastAPI gateway app, importing optional gateway extras lazily."""
+    from .app import create_app as _create_app
+
+    return _create_app(*args, **kwargs)
+
+
+def run(*args, **kwargs):
+    """Run the gateway CLI entrypoint, importing optional gateway extras lazily."""
+    from .app import run as _run
+
+    return _run(*args, **kwargs)
+
 
 __all__ = [
     "create_app",
