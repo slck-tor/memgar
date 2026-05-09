@@ -231,6 +231,7 @@ class MemoryRuntimeEnforcer:
         analyzer: Optional[Any] = None,
         policy: Optional[RuntimePolicy] = None,
         agent_id: str = "default",
+        policy_engine: Optional[Any] = None,
     ) -> None:
         self._policy = policy or RuntimePolicy()
         self._agent_id = agent_id
@@ -243,6 +244,9 @@ class MemoryRuntimeEnforcer:
 
         # Optional canary manager (populated if Analyzer has one)
         self._canary_manager: Optional[Any] = None
+
+        # PolicyEngine — used when provided; falls back to inline threshold logic
+        self._policy_engine = policy_engine
 
     # ── lazy initialisation ──────────────────────────────────────────────────
 
@@ -284,23 +288,11 @@ class MemoryRuntimeEnforcer:
         *,
         sanitized_content: Optional[str] = None,
         extra_reason: str = "",
+        canary_leaks: int = 0,
+        agent_id: Optional[str] = None,
+        source_type: str = "unknown",
+        source_id: str = "",
     ) -> EnforcementResult:
-        p = self._policy
-        risk = getattr(analysis, "risk_score", 0)
-        decision_enum = getattr(analysis, "decision", None)
-
-        # Map Analyzer decision + risk to EnforcementAction
-        from memgar.models import Decision
-        if decision_enum == Decision.BLOCK or risk >= p.block_risk_score:
-            action = EnforcementAction.BLOCK
-        elif decision_enum == Decision.QUARANTINE or risk >= p.quarantine_risk_score:
-            if sanitized_content and p.allow_sanitized_writes:
-                action = EnforcementAction.SANITIZE
-            else:
-                action = EnforcementAction.QUARANTINE
-        else:
-            action = EnforcementAction.ALLOW
-
         threats = [
             ThreatInfo(
                 category=str(getattr(getattr(tm, "threat", None), "category", "unknown")),
@@ -311,11 +303,49 @@ class MemoryRuntimeEnforcer:
             for tm in getattr(analysis, "threats", [])
         ]
 
-        reason = getattr(analysis, "explanation", "")
-        if extra_reason:
-            reason = f"{reason}; {extra_reason}" if reason else extra_reason
+        # Delegate to PolicyEngine when available
+        if self._policy_engine is not None:
+            decision = self._policy_engine.decide_from_analysis(
+                analysis,
+                content=content,
+                boundary=boundary.value,
+                source_type=source_type,
+                source_id=source_id,
+                agent_id=agent_id or self._agent_id,
+                canary_leaks=canary_leaks,
+                was_sanitized=(sanitized_content is not None),
+            )
+            from memgar.policy_engine import verdict_to_enforcement_action
+            action_str = verdict_to_enforcement_action(decision.verdict)
+            action = EnforcementAction(action_str)
+            reason = decision.reason
+            if extra_reason:
+                reason = f"{reason}; {extra_reason}" if reason else extra_reason
+        else:
+            # Legacy inline threshold logic (backward compat)
+            p = self._policy
+            risk = getattr(analysis, "risk_score", 0)
+            decision_enum = getattr(analysis, "decision", None)
+            from memgar.models import Decision
+            if canary_leaks or decision_enum == Decision.BLOCK or risk >= p.block_risk_score:
+                action = EnforcementAction.BLOCK
+            elif decision_enum == Decision.QUARANTINE or risk >= p.quarantine_risk_score:
+                if sanitized_content and p.allow_sanitized_writes:
+                    action = EnforcementAction.SANITIZE
+                else:
+                    action = EnforcementAction.QUARANTINE
+            else:
+                action = EnforcementAction.ALLOW
+            reason = getattr(analysis, "explanation", "")
+            if extra_reason:
+                reason = f"{reason}; {extra_reason}" if reason else extra_reason
 
-        safe = sanitized_content if (sanitized_content and action == EnforcementAction.SANITIZE) else content
+        risk = getattr(analysis, "risk_score", 0)
+        safe = (
+            sanitized_content
+            if (sanitized_content and action == EnforcementAction.SANITIZE)
+            else content
+        )
 
         return EnforcementResult(
             boundary=boundary,
@@ -381,7 +411,11 @@ class MemoryRuntimeEnforcer:
 
             return self._build_result(
                 EnforcedBoundary.MEMORY_WRITE, content, analysis,
-                (time.perf_counter() - t0) * 1000, sanitized_content=sanitized,
+                (time.perf_counter() - t0) * 1000,
+                sanitized_content=sanitized,
+                agent_id=agent_id,
+                source_type=source_type,
+                source_id=source_id or "",
             )
         except Exception as exc:
             return self._error_result(EnforcedBoundary.MEMORY_WRITE, content, exc)

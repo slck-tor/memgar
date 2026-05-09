@@ -109,6 +109,17 @@ from memgar.runtime import (
     ThreatInfo,
     MemoryPoisoningError,
 )
+from memgar.policy_engine import (
+    PolicyEngine,
+    PolicyVerdict,
+    PolicyContext,
+    PolicyDecision as EnginePolicyDecision,
+    PolicyRule,
+    PolicyProfile,
+    most_restrictive,
+    get_global_engine,
+    reset_global_engine,
+)
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
