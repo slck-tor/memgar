@@ -120,6 +120,15 @@ from memgar.policy_engine import (
     get_global_engine,
     reset_global_engine,
 )
+from memgar.memory_vault import (
+    MemoryVault,
+    VaultSnapshot,
+    SnapshotEntry,
+    VaultDiff,
+    DiffEntry,
+    RollbackPlan,
+    VaultVerificationResult,
+)
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -1160,6 +1169,15 @@ __all__ = [
     "BrandMention",
     "BiasReport",
     "extract_brand_mentions",
+
+    # Memory Vault — signed snapshots, diff, rollback
+    "MemoryVault",
+    "VaultSnapshot",
+    "SnapshotEntry",
+    "VaultDiff",
+    "DiffEntry",
+    "RollbackPlan",
+    "VaultVerificationResult",
 
     # Multi-tenant key management
     "TenantStore",
