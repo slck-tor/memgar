@@ -89,8 +89,8 @@ class SimilarityLayer:
     def __init__(
         self,
         model_name: str = "all-MiniLM-L6-v2",
-        threat_threshold: float = 0.68,
-        quarantine_threshold: float = 0.50,
+        threat_threshold: float = 0.4,
+        quarantine_threshold: float = 0.27,
         top_k: int = 3,
         custom_examples: Optional[Dict[str, List[str]]] = None,
     ) -> None:
