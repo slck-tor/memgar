@@ -24,6 +24,11 @@ class _RiskyAnalyzer:
         return []
 
 
+def _require_gateway_app_extras():
+    pytest.importorskip("httpx", reason="gateway extras (fastapi/httpx) not installed")
+    pytest.importorskip("fastapi", reason="gateway extras (fastapi/httpx) not installed")
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -41,6 +46,8 @@ def test_gateway_policy_rejects_ssrf_upstreams(url):
 
 
 def test_gateway_sanitize_rewrites_payload_content():
+    _require_gateway_app_extras()
+
     from memgar.gateway.app import Gateway
     from memgar.gateway.policy import PolicyDecision
 
@@ -65,6 +72,8 @@ def test_gateway_sanitize_rewrites_payload_content():
 
 
 def test_gateway_scans_tool_call_arguments():
+    _require_gateway_app_extras()
+
     from memgar.gateway.app import Gateway
     from memgar.gateway.policy import PolicyDecision
 
