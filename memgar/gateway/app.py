@@ -97,12 +97,59 @@ class Gateway:
         policy: Optional[GatewayPolicy] = None,
         analyzer: Optional[Analyzer] = None,
         policy_engine: Optional[Any] = None,
+        quarantine_store: Optional[Any] = None,
+        review_notifier: Optional[Any] = None,
+        sanitizer: Optional[Any] = None,
+        siem_router: Optional[Any] = None,
     ) -> None:
+        """
+        Args:
+            policy: ``GatewayPolicy`` (uses defaults if omitted).
+            analyzer: Pre-built ``Analyzer`` (defaults to ``Analyzer(use_llm=False)``).
+            policy_engine: Optional ``PolicyEngine``; when present its verdict
+                drives the gateway. The gateway will *materialize* SANITIZE
+                (rewrites payload text) and QUARANTINE/HUMAN_REVIEW (HTTP 202
+                with the quarantine ID) instead of silently downgrading them.
+            quarantine_store: Optional ``QuarantineStore``; when present the
+                gateway persists any SANITIZE/QUARANTINE/HUMAN_REVIEW request
+                so reviewers can inspect the original payload.
+            review_notifier: Optional ``ReviewNotifier``; fires on HUMAN_REVIEW.
+            sanitizer: Optional sanitizer (defaults to ``InstructionSanitizer``).
+                Used to rewrite messages when verdict==SANITIZE.
+            siem_router: Optional ``SIEMRouter``; emits ``THREAT_DETECTED``
+                events on BLOCK and ``HITL_REQUESTED`` on HUMAN_REVIEW.
+        """
         self.policy = policy or GatewayPolicy()
         self.analyzer = analyzer or Analyzer(use_llm=False)
         self._client: Optional[httpx.AsyncClient] = None
-        # Optional PolicyEngine — when present, overrides inline threshold logic
         self._policy_engine = policy_engine
+        self._quarantine_store = quarantine_store
+        self._review_notifier = review_notifier
+        self._siem_router = siem_router
+
+        # Default sanitizer
+        if sanitizer is not None:
+            self._sanitizer = sanitizer
+        else:
+            try:
+                from memgar.sanitizer import InstructionSanitizer
+                self._sanitizer = InstructionSanitizer()
+            except Exception:
+                self._sanitizer = None
+
+        # Back-fill the engine's backends if the caller wired them only here
+        if self._policy_engine is not None:
+            if (self._quarantine_store is not None
+                    and getattr(self._policy_engine, "quarantine_store", None) is None
+                    and hasattr(self._policy_engine, "attach_quarantine_store")):
+                self._policy_engine.attach_quarantine_store(self._quarantine_store)
+            if (self._review_notifier is not None
+                    and getattr(self._policy_engine, "review_notifier", None) is None
+                    and hasattr(self._policy_engine, "attach_review_notifier")):
+                self._policy_engine.attach_review_notifier(self._review_notifier)
+            if (self._sanitizer is not None
+                    and hasattr(self._policy_engine, "attach_sanitizer")):
+                self._policy_engine.attach_sanitizer(self._sanitizer)
 
     async def startup(self) -> None:
         if self._client is not None:
@@ -122,13 +169,25 @@ class Gateway:
     # -----------------------------------------------------------------
 
     def scan_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Return ``{"decision": ..., "risk": ..., "reason": ..., "payload": ...}``.
+        """
+        Inspect a request payload and return an enforcement verdict.
 
-        ``payload`` may be returned modified (sanitised) when policy says so.
+        Returns a dict with:
+            decision         — gateway PolicyDecision enum
+            risk             — worst per-message risk score
+            reason           — explanation
+            payload          — possibly-sanitized payload for forwarding
+            quarantine_id    — set when verdict held the request for review
+            notified         — True iff a HUMAN_REVIEW notifier accepted
+            matched_rule     — PolicyEngine rule that fired (when applicable)
         """
         ip = self.policy.input
         if not ip.enabled:
-            return {"decision": PolicyDecision.ALLOW, "risk": 0, "reason": "", "payload": payload}
+            return {
+                "decision": PolicyDecision.ALLOW, "risk": 0, "reason": "",
+                "payload": payload, "quarantine_id": "", "notified": False,
+                "matched_rule": "",
+            }
 
         # Block disallowed model names early
         model = (payload.get("model") or "").lower()
@@ -139,11 +198,16 @@ class Gateway:
                     "risk": 100,
                     "reason": f"model '{model}' is on the gateway blocklist",
                     "payload": payload,
+                    "quarantine_id": "",
+                    "notified": False,
+                    "matched_rule": "blocked_model",
                 }
 
         max_risk = 0
         worst_explanation = ""
-        sanitised_payload = payload
+        worst_analysis: Optional[Any] = None
+        worst_text = ""
+        worst_role = ""
 
         texts = _extract_input_texts(payload)
         if not ip.scan_all_messages and texts:
@@ -162,55 +226,265 @@ class Gateway:
                 return {
                     "decision": PolicyDecision.BLOCK, "risk": 100,
                     "reason": f"analyzer error: {exc}", "payload": payload,
+                    "quarantine_id": "", "notified": False,
+                    "matched_rule": "analyzer_error",
                 }
 
-            if result.risk_score > max_risk:
+            # Always retain at least one analysis so the PolicyEngine path
+            # can fire even on benign payloads (it has rules beyond risk
+            # thresholds — block_source, allow_agent, etc.).
+            if worst_analysis is None or result.risk_score > max_risk:
                 max_risk = result.risk_score
                 worst_explanation = result.explanation
+                worst_analysis = result
+                worst_text = entry["content"]
+                worst_role = entry["role"]
 
-            if result.decision == Decision.BLOCK:
-                return {
-                    "decision": PolicyDecision.BLOCK, "risk": result.risk_score,
-                    "reason": result.explanation, "payload": payload,
-                }
+            # Hard-BLOCK shortcut applies only when no PolicyEngine is wired —
+            # otherwise the engine owns the verdict (it has its own
+            # ``analyzer_hard_block`` rule at priority 5, plus rules that may
+            # legitimately downgrade an analyzer block, e.g. trusted agent).
+            if result.decision == Decision.BLOCK and self._policy_engine is None:
+                return self._block_verdict(
+                    payload=payload, risk=result.risk_score,
+                    reason=result.explanation, matched_rule="analyzer_hard_block",
+                    content=entry["content"],
+                )
 
         # Delegate to PolicyEngine when available; fall back to inline thresholds
-        if self._policy_engine is not None:
-            from memgar.policy_engine import PolicyContext, PolicyVerdict
-            ctx = PolicyContext(
-                content="<gateway_request>",
-                risk_score=max_risk,
+        if self._policy_engine is not None and worst_analysis is not None:
+            from memgar.policy_engine import PolicyVerdict
+            pe_decision = self._policy_engine.decide_from_analysis(
+                worst_analysis,
+                content=worst_text,
                 boundary="gateway_input",
+                source_type="gateway",
+                agent_id=str(payload.get("user", "")),
+                was_sanitized=False,
             )
-            pe_decision = self._policy_engine.decide(ctx)
-            _verdict_map = {
-                PolicyVerdict.ALLOW:        PolicyDecision.ALLOW,
-                PolicyVerdict.SANITIZE:     PolicyDecision.SANITIZE,
-                PolicyVerdict.QUARANTINE:   PolicyDecision.BLOCK,   # gateway blocks quarantine
-                PolicyVerdict.HUMAN_REVIEW: PolicyDecision.BLOCK,
-                PolicyVerdict.BLOCK:        PolicyDecision.BLOCK,
-            }
-            gw_decision = _verdict_map[pe_decision.verdict]
+            verdict = pe_decision.verdict
+
+            if verdict == PolicyVerdict.BLOCK:
+                return self._block_verdict(
+                    payload=payload, risk=max_risk,
+                    reason=pe_decision.reason or worst_explanation,
+                    matched_rule=pe_decision.matched_rule,
+                    content=worst_text,
+                )
+
+            if verdict in (PolicyVerdict.QUARANTINE, PolicyVerdict.HUMAN_REVIEW):
+                # Engine already persisted to its own quarantine_store (if wired),
+                # but if the gateway has its own store and the engine didn't,
+                # persist here too so reviewers always see the request.
+                qid = pe_decision.quarantine_id or self._persist_quarantine(
+                    content=worst_text,
+                    reason=pe_decision.reason or worst_explanation,
+                    verdict=verdict.value,
+                    risk_score=max_risk,
+                    role=worst_role,
+                    matched_rule=pe_decision.matched_rule,
+                    payload_preview=str(payload)[:500],
+                )
+                gw_decision = (
+                    PolicyDecision.QUARANTINE if verdict == PolicyVerdict.QUARANTINE
+                    else PolicyDecision.HUMAN_REVIEW
+                )
+                return {
+                    "decision": gw_decision, "risk": max_risk,
+                    "reason": pe_decision.reason or worst_explanation,
+                    "payload": payload,
+                    "quarantine_id": qid,
+                    "notified": pe_decision.notified,
+                    "matched_rule": pe_decision.matched_rule,
+                }
+
+            if verdict == PolicyVerdict.SANITIZE:
+                # Rewrite the actual message content rather than passing it
+                # through unchanged.  Use engine-supplied cleaned text when
+                # available, else fall back to per-message sanitisation.
+                sanitised_payload = self._materialize_sanitize(
+                    payload, override_text=pe_decision.sanitized_content or None,
+                )
+                return {
+                    "decision": PolicyDecision.SANITIZE, "risk": max_risk,
+                    "reason": pe_decision.reason or worst_explanation,
+                    "payload": sanitised_payload,
+                    "quarantine_id": "", "notified": False,
+                    "matched_rule": pe_decision.matched_rule,
+                }
+
+            # ALLOW
             return {
-                "decision": gw_decision, "risk": max_risk,
-                "reason": pe_decision.reason or worst_explanation,
-                "payload": sanitised_payload,
+                "decision": PolicyDecision.ALLOW, "risk": max_risk,
+                "reason": pe_decision.reason or "",
+                "payload": payload,
+                "quarantine_id": "", "notified": False,
+                "matched_rule": pe_decision.matched_rule,
             }
 
+        # ── Fallback: legacy inline threshold logic ──────────────────────────
+
         if max_risk >= ip.block_risk_score:
-            return {
-                "decision": PolicyDecision.BLOCK, "risk": max_risk,
-                "reason": worst_explanation, "payload": payload,
-            }
+            return self._block_verdict(
+                payload=payload, risk=max_risk, reason=worst_explanation,
+                matched_rule="risk_block_threshold", content=worst_text,
+            )
         if max_risk >= ip.sanitize_risk_score:
+            sanitised_payload = self._materialize_sanitize(payload)
             return {
                 "decision": PolicyDecision.SANITIZE, "risk": max_risk,
                 "reason": worst_explanation, "payload": sanitised_payload,
+                "quarantine_id": "", "notified": False,
+                "matched_rule": "risk_sanitize_threshold",
             }
         return {
             "decision": PolicyDecision.ALLOW, "risk": max_risk,
-            "reason": "", "payload": sanitised_payload,
+            "reason": "", "payload": payload,
+            "quarantine_id": "", "notified": False, "matched_rule": "",
         }
+
+    # -----------------------------------------------------------------
+    # Verdict materializers
+    # -----------------------------------------------------------------
+
+    def _block_verdict(
+        self,
+        *,
+        payload: Dict[str, Any],
+        risk: int,
+        reason: str,
+        matched_rule: str,
+        content: str,
+    ) -> Dict[str, Any]:
+        """Build a BLOCK response and emit a SIEM event."""
+        self._emit_siem_block(content=content, risk=risk, reason=reason, matched_rule=matched_rule)
+        return {
+            "decision": PolicyDecision.BLOCK, "risk": risk, "reason": reason,
+            "payload": payload, "quarantine_id": "", "notified": False,
+            "matched_rule": matched_rule,
+        }
+
+    def _materialize_sanitize(
+        self,
+        payload: Dict[str, Any],
+        *,
+        override_text: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Rewrite every scannable message in ``payload`` through the sanitizer.
+
+        If ``override_text`` is provided (engine already produced cleaned text
+        for the worst message) the *worst* message is replaced with that text;
+        all other messages still go through ``sanitizer.sanitize()``.
+        """
+        if self._sanitizer is None and override_text is None:
+            return payload
+
+        new_payload = dict(payload)
+
+        # System prompt
+        sys_p = new_payload.get("system")
+        if isinstance(sys_p, str) and self._sanitizer is not None:
+            new_payload["system"] = self._sanitize_text(sys_p)
+
+        # Messages
+        msgs = new_payload.get("messages")
+        if isinstance(msgs, list):
+            new_msgs: List[Any] = []
+            for m in msgs:
+                if not isinstance(m, dict):
+                    new_msgs.append(m)
+                    continue
+                new_m = dict(m)
+                content = m.get("content")
+                if isinstance(content, str):
+                    new_m["content"] = self._sanitize_text(content)
+                elif isinstance(content, list):
+                    new_blocks: List[Any] = []
+                    for blk in content:
+                        if isinstance(blk, dict) and isinstance(blk.get("text"), str):
+                            new_blk = dict(blk)
+                            new_blk["text"] = self._sanitize_text(blk["text"])
+                            new_blocks.append(new_blk)
+                        else:
+                            new_blocks.append(blk)
+                    new_m["content"] = new_blocks
+                new_msgs.append(new_m)
+            new_payload["messages"] = new_msgs
+
+        # Single-prompt fields
+        for key in ("prompt", "input", "query"):
+            v = new_payload.get(key)
+            if isinstance(v, str) and self._sanitizer is not None:
+                new_payload[key] = self._sanitize_text(v)
+
+        return new_payload
+
+    def _sanitize_text(self, text: str) -> str:
+        if self._sanitizer is None or not text:
+            return text
+        try:
+            sr = self._sanitizer.sanitize(text)
+            cleaned = getattr(sr, "sanitized_content", None)
+            if cleaned is None:
+                cleaned = getattr(sr, "sanitized_text", text)
+            return cleaned if isinstance(cleaned, str) else text
+        except Exception as exc:
+            logger.warning("gateway: sanitizer failed: %s", exc)
+            return text
+
+    def _persist_quarantine(
+        self,
+        *,
+        content: str,
+        reason: str,
+        verdict: str,
+        risk_score: int,
+        role: str,
+        matched_rule: str,
+        payload_preview: str,
+    ) -> str:
+        if self._quarantine_store is None:
+            return ""
+        try:
+            return self._quarantine_store.put(
+                content=content,
+                reason=reason,
+                verdict=verdict,
+                boundary="gateway_input",
+                source_type=f"gateway:{role}" if role else "gateway",
+                risk_score=int(risk_score),
+                matched_rule=matched_rule,
+                metadata={"payload_preview": payload_preview},
+            )
+        except Exception as exc:
+            logger.warning("gateway: quarantine_store.put failed: %s", exc)
+            return ""
+
+    def _emit_siem_block(
+        self, *, content: str, risk: int, reason: str, matched_rule: str,
+    ) -> None:
+        if self._siem_router is None:
+            return
+        try:
+            from memgar.siem import SIEMEvent, EventCategory
+            severity = (
+                "critical" if risk >= 90
+                else "high" if risk >= 70
+                else "medium"
+            )
+            self._siem_router.emit(SIEMEvent(
+                category=EventCategory.THREAT_DETECTED,
+                severity=severity,
+                message=f"Gateway blocked request: {reason}",
+                content_preview=(content or "")[:200],
+                risk_score=int(risk),
+                action="blocked",
+                threat_id=matched_rule or None,
+                extra={"boundary": "gateway_input", "matched_rule": matched_rule},
+            ))
+        except Exception as exc:
+            logger.debug("gateway SIEM emit failed: %s", exc)
 
     # -----------------------------------------------------------------
     # Outbound scanning
@@ -262,6 +536,7 @@ class Gateway:
 
         # 1. Input scan
         verdict = self.scan_request(payload)
+
         if verdict["decision"] == PolicyDecision.BLOCK:
             return JSONResponse(
                 status_code=403,
@@ -271,7 +546,31 @@ class Gateway:
                         "message": "Request blocked by Memgar gateway",
                         "risk_score": verdict["risk"],
                         "reason": verdict["reason"],
+                        "matched_rule": verdict.get("matched_rule", ""),
                     }
+                },
+            )
+
+        if verdict["decision"] in (PolicyDecision.QUARANTINE, PolicyDecision.HUMAN_REVIEW):
+            # Hold the request — it is *not* forwarded upstream. Reviewers can
+            # release the quarantine entry and the caller can retry.
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "status": verdict["decision"].value,
+                    "message": (
+                        "Request held for review by Memgar gateway. "
+                        "Use the quarantine_id to check status."
+                    ),
+                    "risk_score": verdict["risk"],
+                    "reason": verdict["reason"],
+                    "quarantine_id": verdict.get("quarantine_id", ""),
+                    "notified": verdict.get("notified", False),
+                    "matched_rule": verdict.get("matched_rule", ""),
+                },
+                headers={
+                    "x-memgar-quarantine-id": verdict.get("quarantine_id", ""),
+                    "x-memgar-decision": verdict["decision"].value,
                 },
             )
 
@@ -361,8 +660,25 @@ class Gateway:
 # FastAPI factory
 # ---------------------------------------------------------------------------
 
-def create_app(policy: Optional[GatewayPolicy] = None, analyzer: Optional[Analyzer] = None) -> FastAPI:
-    gateway = Gateway(policy=policy, analyzer=analyzer)
+def create_app(
+    policy: Optional[GatewayPolicy] = None,
+    analyzer: Optional[Analyzer] = None,
+    *,
+    policy_engine: Optional[Any] = None,
+    quarantine_store: Optional[Any] = None,
+    review_notifier: Optional[Any] = None,
+    sanitizer: Optional[Any] = None,
+    siem_router: Optional[Any] = None,
+) -> FastAPI:
+    gateway = Gateway(
+        policy=policy,
+        analyzer=analyzer,
+        policy_engine=policy_engine,
+        quarantine_store=quarantine_store,
+        review_notifier=review_notifier,
+        sanitizer=sanitizer,
+        siem_router=siem_router,
+    )
 
     from contextlib import asynccontextmanager
 
@@ -403,6 +719,60 @@ def create_app(policy: Optional[GatewayPolicy] = None, analyzer: Optional[Analyz
                 "jailbreak_count": len(gateway.policy.output.jailbreak_response_patterns),
             },
         }
+
+    @app.get("/__memgar/quarantine")
+    async def list_quarantine() -> Dict[str, Any]:
+        store = gateway._quarantine_store
+        if store is None:
+            return {"enabled": False, "entries": []}
+        return {
+            "enabled": True,
+            "stats": store.stats(),
+            "entries": [
+                {
+                    "id": e.id,
+                    "verdict": e.verdict,
+                    "boundary": e.boundary,
+                    "risk_score": e.risk_score,
+                    "reason": e.reason,
+                    "agent_id": e.agent_id,
+                    "source_type": e.source_type,
+                    "matched_rule": e.matched_rule,
+                    "created_ts": e.created_ts,
+                    "age_seconds": round(e.age_seconds, 1),
+                    "content_preview": e.content[:200],
+                }
+                for e in store.list_pending()
+            ],
+        }
+
+    @app.post("/__memgar/quarantine/{entry_id}/release")
+    async def release_quarantine(entry_id: str, reviewer: str = "anonymous") -> Dict[str, Any]:
+        store = gateway._quarantine_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="No quarantine store configured")
+        try:
+            entry = store.release(entry_id, reviewer=reviewer)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"entry {entry_id!r} not found")
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {"status": "released", "entry_id": entry.id, "reviewer": reviewer}
+
+    @app.post("/__memgar/quarantine/{entry_id}/dismiss")
+    async def dismiss_quarantine(
+        entry_id: str, reviewer: str = "anonymous", note: str = "",
+    ) -> Dict[str, Any]:
+        store = gateway._quarantine_store
+        if store is None:
+            raise HTTPException(status_code=503, detail="No quarantine store configured")
+        try:
+            entry = store.dismiss(entry_id, reviewer=reviewer, note=note)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"entry {entry_id!r} not found")
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {"status": "dismissed", "entry_id": entry.id, "reviewer": reviewer, "note": note}
 
     @app.api_route(
         "/{full_path:path}",

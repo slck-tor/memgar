@@ -79,9 +79,24 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Notifier protocol — used for HUMAN_REVIEW verdicts
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ReviewNotifier(Protocol):
+    """
+    Minimal protocol the PolicyEngine uses to dispatch HUMAN_REVIEW alerts.
+
+    Any object with a ``notify(decision, ctx)`` method qualifies, including
+    the existing ``memgar.hitl.HITLNotifier`` subclasses (with a small
+    adapter — see ``HITLReviewNotifier`` below).
+    """
+    def notify(self, decision: "PolicyDecision", ctx: "PolicyContext") -> bool: ...
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,12 +186,22 @@ class PolicyDecision:
         matched_rule: Name of the rule that triggered.
         confidence: 0.0–1.0; rules may lower this for uncertain decisions.
         ctx: The context that was evaluated (for audit logging).
+        quarantine_id: ID of the QuarantineStore entry created when verdict
+            is QUARANTINE/HUMAN_REVIEW. Empty when no store is wired up
+            or the verdict does not require quarantining.
+        notified: True when a ReviewNotifier successfully accepted a
+            HUMAN_REVIEW alert. False on notifier error or absence.
+        sanitized_content: Cleaned text produced when verdict is SANITIZE
+            and a sanitizer is wired in. Empty for other verdicts.
     """
     verdict: PolicyVerdict
     reason: str
     matched_rule: str = "default_allow"
     confidence: float = 1.0
     ctx: Optional[PolicyContext] = None
+    quarantine_id: str = ""
+    notified: bool = False
+    sanitized_content: str = ""
 
     @property
     def allowed(self) -> bool:
@@ -198,6 +223,8 @@ class PolicyDecision:
             "confidence": round(self.confidence, 3),
             "allowed": self.allowed,
             "needs_review": self.needs_review,
+            "quarantine_id": self.quarantine_id,
+            "notified": self.notified,
         }
 
 
@@ -437,12 +464,36 @@ class PolicyEngine:
         profile: str = "balanced",
         extra_rules: Optional[List[PolicyRule]] = None,
         audit_log: bool = False,
+        quarantine_store: Optional[Any] = None,
+        review_notifier: Optional[ReviewNotifier] = None,
+        sanitizer: Optional[Any] = None,
     ) -> None:
+        """
+        Args:
+            profile: Threshold profile name — "strict" / "balanced" / "lenient".
+            extra_rules: Additional rules merged in at construction time.
+            audit_log: Log every decision at DEBUG level.
+            quarantine_store: A ``QuarantineStore`` (or compatible) to which
+                content will be written when verdict == QUARANTINE or
+                HUMAN_REVIEW. If omitted, those verdicts are returned but no
+                content is persisted (caller responsibility).
+            review_notifier: A ``ReviewNotifier`` invoked on HUMAN_REVIEW
+                verdicts. If omitted, no notification is sent.
+            sanitizer: An object with a ``sanitize(text)`` method (e.g.
+                ``InstructionSanitizer``). When verdict == SANITIZE the engine
+                will populate ``decision.sanitized_content`` with the cleaned
+                text. If omitted, callers must sanitize themselves.
+        """
         self._audit_log = audit_log
         self._agent_profiles: Dict[str, str] = {}       # agent_id → profile name
         self._tenant_profiles: Dict[str, str] = {}      # tenant_id → profile name
         self._custom_rules: List[PolicyRule] = []        # operator-added rules
         self._profile_name = profile
+
+        # Enforcement backends
+        self._quarantine_store = quarantine_store
+        self._review_notifier = review_notifier
+        self._sanitizer = sanitizer
 
         # Load base profile rules
         self._profile_rules: List[PolicyRule] = self._load_profile(profile)
@@ -450,6 +501,28 @@ class PolicyEngine:
         if extra_rules:
             for r in extra_rules:
                 self._custom_rules.append(r)
+
+    # ── backend wiring (post-construction) ────────────────────────────────────
+
+    def attach_quarantine_store(self, store: Any) -> None:
+        """Attach (or replace) the QuarantineStore used for QUARANTINE verdicts."""
+        self._quarantine_store = store
+
+    def attach_review_notifier(self, notifier: ReviewNotifier) -> None:
+        """Attach (or replace) the ReviewNotifier used for HUMAN_REVIEW verdicts."""
+        self._review_notifier = notifier
+
+    def attach_sanitizer(self, sanitizer: Any) -> None:
+        """Attach (or replace) the sanitizer used to materialize SANITIZE content."""
+        self._sanitizer = sanitizer
+
+    @property
+    def quarantine_store(self) -> Optional[Any]:
+        return self._quarantine_store
+
+    @property
+    def review_notifier(self) -> Optional[ReviewNotifier]:
+        return self._review_notifier
 
     # ── profile management ────────────────────────────────────────────────────
 
@@ -595,32 +668,126 @@ class PolicyEngine:
         """
         Evaluate all rules against ``ctx`` and return the first match.
 
+        Side effects (when the corresponding backend is wired in):
+          * verdict=SANITIZE     → content is run through the sanitizer and
+                                   the cleaned text is stored on
+                                   ``decision.sanitized_content``.
+          * verdict=QUARANTINE   → content is persisted to ``quarantine_store``
+                                   and the entry ID is stored on
+                                   ``decision.quarantine_id``.
+          * verdict=HUMAN_REVIEW → content is persisted to ``quarantine_store``
+                                   AND ``review_notifier.notify()`` is called;
+                                   ``decision.notified`` records success.
+
         If the agent or tenant has a profile override, the threshold rules
         are temporarily replaced for this evaluation.
         """
         rules = self._sorted_rules(ctx)
 
+        decision: Optional[PolicyDecision] = None
         for rule in rules:
-            decision = rule.evaluate(ctx)
-            if decision is not None:
-                if self._audit_log:
-                    logger.debug(
-                        "PolicyEngine [%s/%s] → %s (rule=%s, risk=%d)",
-                        ctx.agent_id or "-",
-                        ctx.boundary,
-                        decision.verdict.value,
-                        decision.matched_rule,
-                        ctx.risk_score,
-                    )
-                return decision
+            evaluated = rule.evaluate(ctx)
+            if evaluated is not None:
+                decision = evaluated
+                break
 
-        # Should never reach here (catch_all_allow always fires) but be safe
-        return PolicyDecision(
-            verdict=PolicyVerdict.ALLOW,
-            reason="fallback allow",
-            matched_rule="__fallback__",
-            ctx=ctx,
-        )
+        if decision is None:
+            # Should never reach here (catch_all_allow always fires) but be safe
+            decision = PolicyDecision(
+                verdict=PolicyVerdict.ALLOW,
+                reason="fallback allow",
+                matched_rule="__fallback__",
+                ctx=ctx,
+            )
+
+        # Apply enforcement side-effects
+        self._apply_enforcement(decision, ctx)
+
+        if self._audit_log:
+            logger.debug(
+                "PolicyEngine [%s/%s] → %s (rule=%s, risk=%d, qid=%s, notified=%s)",
+                ctx.agent_id or "-",
+                ctx.boundary,
+                decision.verdict.value,
+                decision.matched_rule,
+                ctx.risk_score,
+                decision.quarantine_id[:8] if decision.quarantine_id else "-",
+                decision.notified,
+            )
+        return decision
+
+    def _apply_enforcement(self, decision: PolicyDecision, ctx: PolicyContext) -> None:
+        """
+        Materialize the verdict by invoking the wired-in backends.
+
+        Best-effort: backend failures are logged but never raised — a notifier
+        outage must not crash the request path.
+        """
+        verdict = decision.verdict
+
+        # SANITIZE → produce cleaned content
+        if verdict == PolicyVerdict.SANITIZE and self._sanitizer is not None:
+            try:
+                sr = self._sanitizer.sanitize(ctx.content)
+                # Try common attribute names across sanitizer implementations.
+                # Empty string is a valid result ("everything was malicious"),
+                # so use a sentinel to distinguish "didn't run" from "ran and
+                # produced empty output".
+                _MISSING = object()
+                cleaned: Any = _MISSING
+                for attr in ("sanitized_content", "sanitized_text", "cleaned", "text"):
+                    val = getattr(sr, attr, _MISSING)
+                    if val is not _MISSING and isinstance(val, str):
+                        cleaned = val
+                        break
+                if cleaned is _MISSING and isinstance(sr, str):
+                    cleaned = sr
+                if cleaned is not _MISSING:
+                    decision.sanitized_content = cleaned
+            except Exception as exc:
+                logger.warning("PolicyEngine sanitizer failed: %s", exc)
+
+        # QUARANTINE / HUMAN_REVIEW → persist content for review
+        if verdict in (PolicyVerdict.QUARANTINE, PolicyVerdict.HUMAN_REVIEW) \
+                and self._quarantine_store is not None:
+            try:
+                qid = self._quarantine_store.put(
+                    content=ctx.content,
+                    reason=decision.reason,
+                    verdict=verdict.value,
+                    boundary=ctx.boundary,
+                    source_type=ctx.source_type,
+                    source_id=ctx.source_id,
+                    agent_id=ctx.agent_id,
+                    tenant_id=ctx.tenant_id,
+                    risk_score=ctx.risk_score,
+                    categories=list(ctx.categories),
+                    matched_rule=decision.matched_rule,
+                    metadata={"confidence": decision.confidence, **(ctx.extra or {})},
+                )
+                decision.quarantine_id = qid
+            except Exception as exc:
+                # Don't blank the verdict — caller still needs to know it was
+                # held back; just record the persistence failure in the reason.
+                logger.warning("PolicyEngine quarantine_store.put failed: %s", exc)
+                decision.reason = (
+                    (decision.reason + "; " if decision.reason else "")
+                    + f"quarantine_store_error: {exc}"
+                )
+
+        # HUMAN_REVIEW → also fire notifier
+        if verdict == PolicyVerdict.HUMAN_REVIEW and self._review_notifier is not None:
+            try:
+                ok = bool(self._review_notifier.notify(decision, ctx))
+                decision.notified = ok
+                if not ok:
+                    logger.warning(
+                        "ReviewNotifier returned False for decision %s (rule=%s)",
+                        verdict.value, decision.matched_rule,
+                    )
+            except Exception as exc:
+                logger.warning("PolicyEngine review_notifier failed: %s", exc)
+                decision.notified = False
 
     def decide_from_analysis(
         self,
@@ -736,6 +903,127 @@ def reset_global_engine() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Concrete ReviewNotifier implementations
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LoggingReviewNotifier:
+    """
+    Default no-frills notifier — writes a structured WARNING to the
+    ``memgar.policy_engine.review`` logger.
+
+    Useful as a baseline / fallback when no Slack / webhook is configured.
+    """
+
+    def __init__(self, logger_name: str = "memgar.policy_engine.review") -> None:
+        self._log = logging.getLogger(logger_name)
+
+    def notify(self, decision: "PolicyDecision", ctx: "PolicyContext") -> bool:
+        self._log.warning(
+            "[HUMAN_REVIEW] agent=%s boundary=%s risk=%d rule=%s qid=%s reason=%s",
+            ctx.agent_id or "-",
+            ctx.boundary,
+            ctx.risk_score,
+            decision.matched_rule,
+            decision.quarantine_id[:8] if decision.quarantine_id else "-",
+            decision.reason,
+        )
+        return True
+
+
+class CallbackReviewNotifier:
+    """
+    Adapter that turns any callable into a ReviewNotifier.
+
+    ::
+
+        engine = PolicyEngine(
+            review_notifier=CallbackReviewNotifier(
+                lambda d, c: my_alert_fn(d.reason, c.agent_id)
+            )
+        )
+    """
+
+    def __init__(self, callback: Callable[["PolicyDecision", "PolicyContext"], Any]) -> None:
+        self._cb = callback
+
+    def notify(self, decision: "PolicyDecision", ctx: "PolicyContext") -> bool:
+        try:
+            result = self._cb(decision, ctx)
+            return bool(result) if result is not None else True
+        except Exception as exc:
+            logger.warning("CallbackReviewNotifier callback raised: %s", exc)
+            return False
+
+
+class HITLReviewNotifier:
+    """
+    Adapter that bridges a ``memgar.hitl.HITLNotifier`` to the
+    ``ReviewNotifier`` protocol.
+
+    Builds an ``ApprovalRequest`` from the PolicyDecision/PolicyContext and
+    calls the HITL notifier's ``send()`` method. The approve/deny URLs are
+    optional — pass them when you have an HITLServer running, otherwise leave
+    blank for fire-and-forget alerting.
+    """
+
+    def __init__(
+        self,
+        hitl_notifier: Any,
+        approve_url_template: str = "",
+        deny_url_template: str = "",
+        timeout_seconds: float = 24 * 3600,
+    ) -> None:
+        self._notifier = hitl_notifier
+        self._approve_tpl = approve_url_template
+        self._deny_tpl = deny_url_template
+        self._timeout = timeout_seconds
+
+    def notify(self, decision: "PolicyDecision", ctx: "PolicyContext") -> bool:
+        try:
+            from memgar.hitl import ApprovalRequest, RiskLevel
+        except Exception as exc:
+            logger.warning("HITLReviewNotifier: hitl module unavailable: %s", exc)
+            return False
+
+        # Map risk_score → RiskLevel
+        if ctx.risk_score >= 90:
+            risk_level = RiskLevel.CRITICAL
+        elif ctx.risk_score >= 70:
+            risk_level = RiskLevel.HIGH
+        elif ctx.risk_score >= 40:
+            risk_level = RiskLevel.MEDIUM
+        else:
+            risk_level = RiskLevel.LOW
+
+        qid = decision.quarantine_id or "no-quarantine-id"
+        approve_url = self._approve_tpl.format(quarantine_id=qid) if self._approve_tpl else ""
+        deny_url = self._deny_tpl.format(quarantine_id=qid) if self._deny_tpl else ""
+
+        request = ApprovalRequest(
+            request_id=qid,
+            action=f"policy:{decision.verdict.value}",
+            agent_id=ctx.agent_id or "unknown",
+            risk_level=risk_level,
+            details={
+                "boundary": ctx.boundary,
+                "matched_rule": decision.matched_rule,
+                "reason": decision.reason,
+                "risk_score": ctx.risk_score,
+                "categories": ctx.categories,
+                "source_type": ctx.source_type,
+                "source_id": ctx.source_id,
+                "content_preview": (ctx.content or "")[:200],
+            },
+            timeout_seconds=self._timeout,
+        )
+        try:
+            return bool(self._notifier.send(request, approve_url, deny_url))
+        except Exception as exc:
+            logger.warning("HITLReviewNotifier: notifier.send raised: %s", exc)
+            return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Compatibility adapters — bridge from canonical verdicts to legacy enums
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -780,6 +1068,10 @@ __all__ = [
     "PolicyDecision",
     "PolicyRule",
     "PolicyProfile",
+    "ReviewNotifier",
+    "LoggingReviewNotifier",
+    "CallbackReviewNotifier",
+    "HITLReviewNotifier",
     "most_restrictive",
     "get_global_engine",
     "reset_global_engine",

@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 class PolicyDecision(str, Enum):
     ALLOW = "allow"
     SANITIZE = "sanitize"
+    QUARANTINE = "quarantine"
+    HUMAN_REVIEW = "human_review"
     BLOCK = "block"
 
 

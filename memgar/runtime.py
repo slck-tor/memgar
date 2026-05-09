@@ -129,6 +129,11 @@ class EnforcementResult:
     threats: List[ThreatInfo] = field(default_factory=list)
     reason: str = ""
 
+    # Enforcement bookkeeping
+    quarantine_id: str = ""     # set when content was persisted to quarantine
+    notified: bool = False      # set when HUMAN_REVIEW notifier was fired
+    matched_rule: str = ""      # PolicyEngine rule that triggered this verdict
+
     # Timing
     latency_ms: float = 0.0
 
@@ -159,6 +164,9 @@ class EnforcementResult:
                 for t in self.threats
             ],
             "reason": self.reason,
+            "quarantine_id": self.quarantine_id,
+            "notified": self.notified,
+            "matched_rule": self.matched_rule,
             "latency_ms": round(self.latency_ms, 2),
         }
 
@@ -232,7 +240,28 @@ class MemoryRuntimeEnforcer:
         policy: Optional[RuntimePolicy] = None,
         agent_id: str = "default",
         policy_engine: Optional[Any] = None,
+        quarantine_store: Optional[Any] = None,
+        siem_router: Optional[Any] = None,
+        auto_quarantine_store: bool = True,
     ) -> None:
+        """
+        Args:
+            analyzer: ``Analyzer`` instance (created with defaults if omitted).
+            policy: ``RuntimePolicy`` (uses defaults if omitted).
+            agent_id: Default agent identifier attached to all events.
+            policy_engine: Optional ``PolicyEngine``.  When provided, all
+                verdict logic is delegated to it.
+            quarantine_store: Optional ``QuarantineStore``.  When the engine
+                returns QUARANTINE/HUMAN_REVIEW the runtime ensures content
+                is persisted here even if the engine wasn't wired with one.
+            siem_router: Optional ``SIEMRouter``.  When set, BLOCK actions
+                emit a ``MEMORY_BLOCKED`` event for forensics.
+            auto_quarantine_store: When True (default) and no
+                ``quarantine_store`` was passed, the runtime will lazily
+                attach the process-wide singleton via
+                ``memgar.quarantine.get_global_store()``.  Set False to
+                require explicit wiring.
+        """
         self._policy = policy or RuntimePolicy()
         self._agent_id = agent_id
 
@@ -247,6 +276,41 @@ class MemoryRuntimeEnforcer:
 
         # PolicyEngine — used when provided; falls back to inline threshold logic
         self._policy_engine = policy_engine
+        self._quarantine_store = quarantine_store
+        self._siem_router = siem_router
+        self._auto_quarantine_store = auto_quarantine_store
+
+        # If a PolicyEngine was given but lacks a quarantine_store and we have
+        # one here, attach it so the engine handles persistence automatically.
+        if (self._policy_engine is not None
+                and self._quarantine_store is not None
+                and getattr(self._policy_engine, "quarantine_store", None) is None
+                and hasattr(self._policy_engine, "attach_quarantine_store")):
+            try:
+                self._policy_engine.attach_quarantine_store(self._quarantine_store)
+            except Exception:
+                pass
+
+    # ── lazy backend resolution ───────────────────────────────────────────────
+
+    def _resolve_quarantine_store(self) -> Optional[Any]:
+        """Return the active quarantine store, lazily creating the singleton."""
+        if self._quarantine_store is not None:
+            return self._quarantine_store
+        if not self._auto_quarantine_store:
+            return None
+        try:
+            from memgar.quarantine import get_global_store
+            self._quarantine_store = get_global_store()
+            # Back-fill into the engine if it doesn't have one
+            if (self._policy_engine is not None
+                    and getattr(self._policy_engine, "quarantine_store", None) is None
+                    and hasattr(self._policy_engine, "attach_quarantine_store")):
+                self._policy_engine.attach_quarantine_store(self._quarantine_store)
+        except Exception as exc:
+            logger.debug("auto quarantine store unavailable: %s", exc)
+            self._quarantine_store = None
+        return self._quarantine_store
 
     # ── lazy initialisation ──────────────────────────────────────────────────
 
@@ -303,6 +367,12 @@ class MemoryRuntimeEnforcer:
             for tm in getattr(analysis, "threats", [])
         ]
 
+        # Default enforcement bookkeeping
+        quarantine_id = ""
+        notified = False
+        matched_rule = ""
+        engine_sanitized: Optional[str] = None
+
         # Delegate to PolicyEngine when available
         if self._policy_engine is not None:
             decision = self._policy_engine.decide_from_analysis(
@@ -319,6 +389,10 @@ class MemoryRuntimeEnforcer:
             action_str = verdict_to_enforcement_action(decision.verdict)
             action = EnforcementAction(action_str)
             reason = decision.reason
+            quarantine_id = getattr(decision, "quarantine_id", "") or ""
+            notified = bool(getattr(decision, "notified", False))
+            matched_rule = getattr(decision, "matched_rule", "") or ""
+            engine_sanitized = getattr(decision, "sanitized_content", "") or None
             if extra_reason:
                 reason = f"{reason}; {extra_reason}" if reason else extra_reason
         else:
@@ -341,23 +415,148 @@ class MemoryRuntimeEnforcer:
                 reason = f"{reason}; {extra_reason}" if reason else extra_reason
 
         risk = getattr(analysis, "risk_score", 0)
-        safe = (
-            sanitized_content
-            if (sanitized_content and action == EnforcementAction.SANITIZE)
-            else content
-        )
+
+        # Materialise SANITIZE content. Empty-string is a valid result
+        # ("sanitizer scrubbed everything"), so check for None explicitly.
+        if action == EnforcementAction.SANITIZE:
+            if engine_sanitized is not None:
+                safe = engine_sanitized
+            elif sanitized_content is not None:
+                safe = sanitized_content
+            else:
+                safe = content
+        else:
+            safe = content
+
+        # Persist to quarantine when the engine didn't already do it
+        if action == EnforcementAction.QUARANTINE and not quarantine_id:
+            quarantine_id = self._persist_quarantine(
+                content=content,
+                boundary=boundary,
+                reason=reason,
+                source_type=source_type,
+                source_id=source_id,
+                agent_id=agent_id or self._agent_id,
+                risk_score=int(risk),
+                threats=threats,
+                matched_rule=matched_rule,
+                verdict="quarantine",
+            )
+
+        # SIEM emission for BLOCK
+        if action == EnforcementAction.BLOCK:
+            self._emit_siem_block(
+                content=content,
+                boundary=boundary,
+                reason=reason,
+                source_type=source_type,
+                source_id=source_id,
+                agent_id=agent_id or self._agent_id,
+                risk_score=int(risk),
+                threats=threats,
+                matched_rule=matched_rule,
+            )
 
         return EnforcementResult(
             boundary=boundary,
             action=action,
             original_content=content,
             safe_content=safe,
-            was_sanitized=(sanitized_content is not None and safe != content),
+            was_sanitized=(safe != content),
             risk_score=risk,
             threats=threats,
             reason=reason,
+            quarantine_id=quarantine_id,
+            notified=notified,
+            matched_rule=matched_rule,
             latency_ms=round(latency_ms, 2),
         )
+
+    # ── enforcement side-effects ─────────────────────────────────────────────
+
+    def _persist_quarantine(
+        self,
+        *,
+        content: str,
+        boundary: EnforcedBoundary,
+        reason: str,
+        source_type: str,
+        source_id: str,
+        agent_id: str,
+        risk_score: int,
+        threats: List[ThreatInfo],
+        matched_rule: str,
+        verdict: str = "quarantine",
+    ) -> str:
+        store = self._resolve_quarantine_store()
+        if store is None:
+            return ""
+        try:
+            return store.put(
+                content=content,
+                reason=reason or "runtime enforcement",
+                verdict=verdict,
+                boundary=boundary.value,
+                source_type=source_type,
+                source_id=source_id,
+                agent_id=agent_id,
+                risk_score=risk_score,
+                categories=[t.category for t in threats],
+                matched_rule=matched_rule,
+                metadata={"threats": [
+                    {"category": t.category, "description": t.description,
+                     "confidence": t.confidence}
+                    for t in threats
+                ]},
+            )
+        except Exception as exc:
+            logger.warning("Runtime quarantine persistence failed: %s", exc)
+            return ""
+
+    def _emit_siem_block(
+        self,
+        *,
+        content: str,
+        boundary: EnforcedBoundary,
+        reason: str,
+        source_type: str,
+        source_id: str,
+        agent_id: str,
+        risk_score: int,
+        threats: List[ThreatInfo],
+        matched_rule: str,
+    ) -> None:
+        if self._siem_router is None:
+            return
+        try:
+            from memgar.siem import SIEMEvent, EventCategory
+            severity = (
+                "critical" if risk_score >= 90
+                else "high" if risk_score >= 70
+                else "medium"
+            )
+            top_threat = threats[0] if threats else None
+            event = SIEMEvent(
+                category=EventCategory.THREAT_DETECTED,
+                severity=severity,
+                message=f"Memory access blocked at {boundary.value}: {reason}",
+                agent_id=agent_id,
+                content_preview=(content or "")[:200],
+                threat_id=matched_rule or None,
+                threat_name=top_threat.description if top_threat else None,
+                risk_score=risk_score,
+                action="blocked",
+                extra={
+                    "boundary": boundary.value,
+                    "matched_rule": matched_rule,
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "threats": [t.category for t in threats],
+                },
+            )
+            self._siem_router.emit(event)
+        except Exception as exc:
+            logger.debug("SIEM emit failed: %s", exc)
 
     def _error_result(
         self,
@@ -367,6 +566,18 @@ class MemoryRuntimeEnforcer:
     ) -> EnforcementResult:
         action = EnforcementAction.ALLOW if self._policy.fail_open else EnforcementAction.BLOCK
         logger.warning("RuntimeEnforcer error at %s: %s", boundary.value, exc)
+        if action == EnforcementAction.BLOCK:
+            self._emit_siem_block(
+                content=content,
+                boundary=boundary,
+                reason=f"enforcement_error: {exc}",
+                source_type="unknown",
+                source_id="",
+                agent_id=self._agent_id,
+                risk_score=100,
+                threats=[],
+                matched_rule="enforcement_error",
+            )
         return EnforcementResult(
             boundary=boundary,
             action=action,
@@ -374,6 +585,7 @@ class MemoryRuntimeEnforcer:
             safe_content=content,
             risk_score=0 if self._policy.fail_open else 100,
             reason=f"enforcement_error: {exc}",
+            matched_rule="enforcement_error",
         )
 
     # ── public boundaries ────────────────────────────────────────────────────
