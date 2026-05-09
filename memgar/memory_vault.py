@@ -2,8 +2,8 @@
 MemoryVault - signed memory snapshots with diff and rollback.
 
 Snapshots bind content, source/provenance metadata, and snapshot manifest fields
-into the root hash and Ed25519 signature. This prevents attackers from changing
-metadata or provenance while preserving content hashes.
+into integrity checks and Ed25519 signatures. This prevents attackers from
+changing metadata or provenance while preserving content hashes.
 """
 
 from __future__ import annotations
@@ -51,7 +51,6 @@ class SnapshotEntry:
             "content_hash": self.content_hash,
             "source_type": self.source_type,
             "source_id": self.source_id,
-            "captured_ts": self.captured_ts,
             "metadata": self.metadata,
         }
 
