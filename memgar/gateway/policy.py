@@ -64,6 +64,8 @@ _LOCAL_HOSTNAMES = {
     "metadata.google.internal",
 }
 
+_NUMERIC_PART_RE = re.compile(r"^(?:0x[0-9a-f]+|0[0-7]+|[0-9]+)$", re.IGNORECASE)
+
 
 def _normalize_host(host: str) -> str:
     return host.strip().rstrip(".").lower()
@@ -78,14 +80,56 @@ def _host_matches(host: str, allowed: str) -> bool:
     return host == allowed
 
 
-def _is_private_or_local_host(host: str) -> bool:
-    host = _normalize_host(host)
-    if host in _LOCAL_HOSTNAMES or host.endswith(".localhost"):
-        return True
+def _parse_numeric_ipv4_part(part: str) -> Optional[int]:
+    part = part.lower()
     try:
-        ip = ipaddress.ip_address(host.strip("[]"))
+        if part.startswith("0x"):
+            value = int(part[2:], 16)
+        elif len(part) > 1 and part.startswith("0"):
+            value = int(part, 8)
+        else:
+            value = int(part, 10)
     except ValueError:
-        return False
+        return None
+    return value if 0 <= value <= 0xFFFFFFFF else None
+
+
+def _coerce_obfuscated_ip(host: str) -> Optional[ipaddress._BaseAddress]:
+    """Parse legacy numeric IPv4 forms that URL stacks may still resolve.
+
+    Python's strict ipaddress parser rejects inputs such as 2130706433,
+    0x7f000001, and 0177.0.0.1, but lower-level resolvers and proxies may treat
+    them as 127.0.0.1. Treat numeric-only hostnames conservatively.
+    """
+
+    raw = _normalize_host(host).strip("[]")
+    if not raw:
+        return None
+
+    if _NUMERIC_PART_RE.fullmatch(raw):
+        value = _parse_numeric_ipv4_part(raw)
+        if value is not None and value <= 0xFFFFFFFF:
+            return ipaddress.IPv4Address(value)
+        return None
+
+    parts = raw.split(".")
+    if 1 < len(parts) <= 4 and all(_NUMERIC_PART_RE.fullmatch(part or "") for part in parts):
+        values = [_parse_numeric_ipv4_part(part) for part in parts]
+        if any(value is None for value in values):
+            return None
+        # Reject ambiguous dotted numeric literals even when they are not valid
+        # dotted-quad addresses. Some libc resolver paths still normalize these.
+        if len(values) != 4 or any(value > 255 for value in values):
+            return ipaddress.IPv4Address(0)
+        return ipaddress.IPv4Address(".".join(str(value) for value in values))
+
+    return None
+
+
+def _is_private_or_local_ip(ip: ipaddress._BaseAddress) -> bool:
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return _is_private_or_local_ip(mapped)
     return any((
         ip.is_private,
         ip.is_loopback,
@@ -94,6 +138,21 @@ def _is_private_or_local_host(host: str) -> bool:
         ip.is_reserved,
         ip.is_unspecified,
     ))
+
+
+def _is_private_or_local_host(host: str) -> bool:
+    host = _normalize_host(host)
+    if host in _LOCAL_HOSTNAMES or host.endswith(".localhost"):
+        return True
+
+    raw = host.strip("[]")
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        ip = _coerce_obfuscated_ip(raw)
+    if ip is None:
+        return False
+    return _is_private_or_local_ip(ip)
 
 
 @dataclass
