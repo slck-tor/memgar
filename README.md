@@ -166,7 +166,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gpt-4.1-mini",
+    model=os.environ["OPENAI_MODEL"],
     messages=[{"role": "user", "content": "Remember that I like compact answers."}],
 )
 
@@ -255,6 +255,12 @@ elif decision.blocked:
 ```
 
 ### Add memory integrity, snapshots, and rollback
+
+Install cryptographic helpers for signed snapshots:
+
+```bash
+pip install "memgar[feed]"
+```
 
 ```python
 from memgar import MemoryEntry, MemoryVault
