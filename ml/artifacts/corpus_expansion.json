@@ -1,0 +1,33 @@
+{
+  "expansion_date": "2026-05-09",
+  "before_count": 76,
+  "after_count": 267,
+  "added": 191,
+  "mined_by_category": {
+    "privilege": 12,
+    "paraphrase_authority": 30,
+    "exfiltration": 24,
+    "paraphrase_financial": 6,
+    "financial": 6,
+    "manipulation": 36,
+    "behavior": 18,
+    "sleeper": 6,
+    "paraphrase_persistence": 6,
+    "prompt_injection": 6,
+    "system_prompt_injection": 5
+  },
+  "adversarial_by_category": {
+    "financial": 15,
+    "credential": 15,
+    "exfiltration": 15,
+    "privilege": 15,
+    "sleeper": 15,
+    "behavior": 15,
+    "manipulation": 15,
+    "paraphrase_financial": 15,
+    "paraphrase_exfiltration": 15,
+    "paraphrase_credential": 15,
+    "paraphrase_authority": 15,
+    "paraphrase_persistence": 15
+  }
+}

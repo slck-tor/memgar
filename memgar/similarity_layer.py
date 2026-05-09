@@ -90,7 +90,7 @@ class SimilarityLayer:
         self,
         model_name: str = "all-MiniLM-L6-v2",
         threat_threshold: float = 0.4,
-        quarantine_threshold: float = 0.27,
+        quarantine_threshold: float = 0.34,
         top_k: int = 3,
         custom_examples: Optional[Dict[str, List[str]]] = None,
     ) -> None:
