@@ -96,10 +96,13 @@ class Gateway:
         self,
         policy: Optional[GatewayPolicy] = None,
         analyzer: Optional[Analyzer] = None,
+        policy_engine: Optional[Any] = None,
     ) -> None:
         self.policy = policy or GatewayPolicy()
         self.analyzer = analyzer or Analyzer(use_llm=False)
         self._client: Optional[httpx.AsyncClient] = None
+        # Optional PolicyEngine — when present, overrides inline threshold logic
+        self._policy_engine = policy_engine
 
     async def startup(self) -> None:
         if self._client is not None:
@@ -170,6 +173,29 @@ class Gateway:
                     "decision": PolicyDecision.BLOCK, "risk": result.risk_score,
                     "reason": result.explanation, "payload": payload,
                 }
+
+        # Delegate to PolicyEngine when available; fall back to inline thresholds
+        if self._policy_engine is not None:
+            from memgar.policy_engine import PolicyContext, PolicyVerdict
+            ctx = PolicyContext(
+                content="<gateway_request>",
+                risk_score=max_risk,
+                boundary="gateway_input",
+            )
+            pe_decision = self._policy_engine.decide(ctx)
+            _verdict_map = {
+                PolicyVerdict.ALLOW:        PolicyDecision.ALLOW,
+                PolicyVerdict.SANITIZE:     PolicyDecision.SANITIZE,
+                PolicyVerdict.QUARANTINE:   PolicyDecision.BLOCK,   # gateway blocks quarantine
+                PolicyVerdict.HUMAN_REVIEW: PolicyDecision.BLOCK,
+                PolicyVerdict.BLOCK:        PolicyDecision.BLOCK,
+            }
+            gw_decision = _verdict_map[pe_decision.verdict]
+            return {
+                "decision": gw_decision, "risk": max_risk,
+                "reason": pe_decision.reason or worst_explanation,
+                "payload": sanitised_payload,
+            }
 
         if max_risk >= ip.block_risk_score:
             return {
