@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -14,7 +15,7 @@ if str(ROOT) not in sys.path:
 from memgar.pattern_corpus import PatternQualityGateProfile, run_pattern_corpus_gate
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run Memgar pattern corpus governance gates")
     parser.add_argument("--min-recall", type=float, default=0.80)
     parser.add_argument("--max-fpr", type=float, default=0.05)
