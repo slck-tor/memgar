@@ -112,6 +112,39 @@ if result.decision == Decision.BLOCK:
 save_to_memory(content)
 ```
 
+## Secure memory write boundary
+
+For production agents, use `SecureMemoryStore` as the official memory write path. It treats every write as untrusted input and runs runtime enforcement, policy, DLP redaction/blocking, audit metadata, optional ledger append, and optional vault registration before the backend is touched.
+
+Direct writes to the raw backend bypass Memgar controls. Keep the raw memory store private and expose only `SecureMemoryStore` to agent code and framework adapters.
+
+```python
+from memgar.memory_store import PersistentMemoryStore
+from memgar.memory_vault import MemoryVault
+from memgar.secure_memory_store import SecureMemoryStore
+
+raw_store = PersistentMemoryStore("./agent-memory.jsonl")
+vault = MemoryVault(db_path="./memgar-vault.sqlite")
+
+memory = SecureMemoryStore(
+    backend=raw_store,
+    vault=vault,
+)
+
+result = memory.write(
+    "User prefers dark mode and concise answers.",
+    source_type="chat",
+    source_id="conversation-123",
+    agent_id="support-agent",
+    tenant_id="tenant-a",
+)
+
+if result.allowed:
+    print("Memory stored through Memgar", result.entry_id)
+```
+
+The same wrapper can protect a Memgar `MemoryStore`, `PersistentMemoryStore`, `MemoryLedger`, Python `list` or `dict`, or a custom backend that exposes `add()`, `append()`, `save()`, or `write()`.
+
 ## Gateway quickstart
 
 Install the gateway extra:
@@ -301,10 +334,12 @@ Recommended placement:
 - In a gateway when you want provider-agnostic request and response enforcement.
 - In a vault when you need signed baselines, audit evidence, and rollback.
 
-The same `MemoryRuntimeEnforcer`, `PolicyEngine`, and `MemoryVault` primitives can be used across LangChain, LlamaIndex, CrewAI, AutoGen, OpenAI-compatible clients, and custom agent runtimes.
+The same `MemoryRuntimeEnforcer`, `PolicyEngine`, `MemoryVault`, and `SecureMemoryStore` primitives can be used across LangChain, LlamaIndex, CrewAI, AutoGen, OpenAI-compatible clients, and custom agent runtimes.
 
 ## Production checklist
 
+- Expose `SecureMemoryStore` as the only supported memory write path.
+- Do not let application or adapter code write directly to the raw memory backend.
 - Run Memgar with `fail_open=False` for autonomous or high-risk agents.
 - Use exact `allowed_upstream_hosts` for gateway deployments.
 - Keep private and local upstreams disabled unless you have a controlled internal deployment.
