@@ -119,6 +119,10 @@ from memgar.policy_engine import (
     most_restrictive,
     get_global_engine,
     reset_global_engine,
+    ReviewNotifier,
+    LoggingReviewNotifier,
+    CallbackReviewNotifier,
+    HITLReviewNotifier,
 )
 from memgar.memory_vault import (
     MemoryVault,
@@ -128,6 +132,24 @@ from memgar.memory_vault import (
     DiffEntry,
     RollbackPlan,
     VaultVerificationResult,
+)
+from memgar.secure_memory_store import (
+    SecureMemoryStore,
+    SecureMemoryStorePolicy,
+    SecureWriteResult,
+    DLPRedactor,
+    DLPPolicy,
+    DLPResult,
+    SecureMemoryBoundaryError,
+    SecureMemoryBypassError,
+    SecureMemoryWriteError,
+)
+from memgar.quarantine import (
+    QuarantineStore,
+    QuarantineEntry,
+    QuarantineStatus,
+    QuarantineFull,
+    QuarantineStateError,
 )
 
 # =============================================================================
