@@ -2,6 +2,11 @@
 
 UniversalMemoryGuard protects arbitrary agent memory callables without depending
 on LangChain, CrewAI, AutoGen, OpenAI Agents, MCP, or a specific vector store.
+
+The default adapter path uses SecureMemoryStore so custom integrations inherit
+Memgar's official write, read, retrieval, tool-result, DLP, and audit boundary.
+Passing an explicit legacy ``guard=...`` keeps older MemoryGuard-compatible test
+or migration code working without changing behavior.
 """
 
 from __future__ import annotations
@@ -14,6 +19,13 @@ from functools import wraps
 from typing import Any, Callable, Iterable, Optional
 
 from memgar.memory_guard import GuardDecision, MemoryGuard
+from memgar.models import MemoryEntry
+from memgar.runtime import EnforcementResult
+from memgar.secure_memory_store import (
+    SecureMemoryStore,
+    SecureMemoryStorePolicy,
+    SecureMemoryWriteError,
+)
 
 
 class MemoryOperation(str, Enum):
@@ -21,6 +33,7 @@ class MemoryOperation(str, Enum):
 
     WRITE = "write"
     READ = "read"
+    RETRIEVAL = "retrieval"
     TOOL_RESULT = "tool_result"
     MESSAGE = "message"
 
@@ -66,8 +79,8 @@ class UniversalMemoryGuard:
     """Protect arbitrary agent memory read/write callables.
 
     This adapter gives custom agents and not-yet-supported frameworks the same
-    memory-poisoning guard surface: wrap a writer, wrap a reader, or call
-    guard_write/guard_read directly.
+    memory-poisoning guard surface: wrap a writer, wrap a reader, guard tool
+    output, scan retrieval results, or call guard_write/guard_read directly.
     """
 
     BLOCK_ACTIONS = {"block", "raise", "human_review"}
@@ -78,17 +91,66 @@ class UniversalMemoryGuard:
         self,
         guard: Optional[Any] = None,
         *,
+        secure_store: Optional[SecureMemoryStore] = None,
+        backend: Optional[Any] = None,
+        store_policy: Optional[SecureMemoryStorePolicy] = None,
+        analyzer: Optional[Any] = None,
+        runtime_policy: Optional[Any] = None,
+        policy_engine: Optional[Any] = None,
+        dlp: Optional[Any] = None,
+        dlp_policy: Optional[Any] = None,
+        auditor: Optional[Any] = None,
+        agent_id: str = "default",
         on_write_threat: str = "block",
         on_read_threat: str = "drop",
+        on_tool_result_threat: str = "block",
         default_source_type: str = "agent_memory",
         default_source_id: Optional[str] = None,
         **guard_kwargs: Any,
     ) -> None:
-        self.guard = guard or MemoryGuard(**guard_kwargs)
         self.on_write_threat = on_write_threat
         self.on_read_threat = on_read_threat
+        self.on_tool_result_threat = on_tool_result_threat
         self.default_source_type = default_source_type
         self.default_source_id = default_source_id
+
+        uses_legacy_guard = guard is not None or (
+            guard_kwargs
+            and secure_store is None
+            and backend is None
+            and analyzer is None
+            and runtime_policy is None
+            and policy_engine is None
+            and dlp is None
+            and dlp_policy is None
+            and auditor is None
+        )
+        if uses_legacy_guard:
+            self.secure_store: Optional[SecureMemoryStore] = None
+            self._legacy_guard = guard or MemoryGuard(**guard_kwargs)
+            self.guard = self._legacy_guard
+            return
+
+        if guard_kwargs:
+            raise TypeError(
+                "Legacy MemoryGuard kwargs cannot be mixed with SecureMemoryStore settings. "
+                "Pass guard=MemoryGuard(...) for legacy behavior or pass analyzer/runtime policy "
+                "settings for the secure adapter path."
+            )
+
+        self.secure_store = secure_store or SecureMemoryStore(
+            backend=backend,
+            analyzer=analyzer,
+            runtime_policy=runtime_policy,
+            policy_engine=policy_engine,
+            dlp=dlp,
+            dlp_policy=dlp_policy,
+            auditor=auditor,
+            policy=store_policy,
+            agent_id=agent_id,
+        )
+        self._legacy_guard = None
+        self.guard = self.secure_store
 
     def protect_write(self, content: Any, **context: Any) -> MemoryProtectionResult:
         """Inspect content before it is committed to memory."""
@@ -108,6 +170,21 @@ class UniversalMemoryGuard:
             **context,
         )
 
+    def protect_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        **context: Any,
+    ) -> MemoryProtectionResult:
+        """Inspect tool/function output before an agent trusts it."""
+        context.setdefault("tool_name", tool_name)
+        return self._protect(
+            result,
+            operation=MemoryOperation.TOOL_RESULT,
+            on_threat=self.on_tool_result_threat,
+            **context,
+        )
+
     def guard_write(self, content: Any, **context: Any) -> Any:
         """Return safe write content or raise MemoryBlockedError."""
         return self.protect_write(content, **context).safe_content
@@ -115,6 +192,10 @@ class UniversalMemoryGuard:
     def guard_read(self, content: Any, **context: Any) -> Any:
         """Return safe read content. Threats are dropped by default."""
         return self.protect_read(content, **context).safe_content
+
+    def guard_tool_result(self, tool_name: str, result: Any, **context: Any) -> Any:
+        """Return safe tool/function output or raise MemoryBlockedError."""
+        return self.protect_tool_result(tool_name, result, **context).safe_content
 
     def wrap_writer(
         self,
@@ -220,6 +301,47 @@ class UniversalMemoryGuard:
             self.protect_read(records, **context)
         return records
 
+    def guard_retrieval_results(
+        self,
+        records: Any,
+        *,
+        query: str = "",
+        top_k: Optional[int] = None,
+        **context: Any,
+    ) -> Any:
+        """Scan retrieval chunks before they enter model context."""
+        if self.secure_store is None:
+            return self.guard_read_results(records, query=query, **context)
+
+        is_tuple = isinstance(records, tuple)
+        is_list = isinstance(records, list)
+        chunks = list(records) if is_tuple or is_list else [records]
+        checked = self.secure_store.guard_retrieval(
+            chunks,
+            query=query,
+            agent_id=context.get("agent_id"),
+            top_k=top_k,
+            include_blocked=True,
+        )
+        guarded: list[Any] = []
+        for item in checked:
+            result = self._protection_from_enforcement(
+                item.enforcement,
+                original=item.chunk,
+                operation=MemoryOperation.RETRIEVAL,
+                metadata={"query": query, "secure_store": True},
+            )
+            result = self._apply_threat_action(result, self.on_read_threat)
+            if not result.allowed and result.safe_content in ("", None):
+                continue
+            guarded.append(self._replace_record_content(item.chunk, result.safe_content))
+
+        if is_tuple:
+            return tuple(guarded)
+        if is_list:
+            return guarded
+        return guarded[0] if guarded else None
+
     def _filter_record_list(self, records: Iterable[Any], **context: Any) -> list[Any]:
         filtered: list[Any] = []
         for record in records:
@@ -280,11 +402,134 @@ class UniversalMemoryGuard:
         on_threat: str,
         **context: Any,
     ) -> MemoryProtectionResult:
+        if self.secure_store is None:
+            return self._protect_legacy(content, operation=operation, on_threat=on_threat, **context)
+        if operation == MemoryOperation.WRITE:
+            return self._protect_secure_write(content, on_threat=on_threat, **context)
+        if operation == MemoryOperation.TOOL_RESULT:
+            return self._protect_secure_tool_result(content, on_threat=on_threat, **context)
+        return self._protect_secure_read(content, operation=operation, on_threat=on_threat, **context)
+
+    def _protect_secure_write(
+        self,
+        content: Any,
+        *,
+        on_threat: str,
+        **context: Any,
+    ) -> MemoryProtectionResult:
+        source_type, source_id, agent_id, tenant_id, principal, metadata = self._extract_context(context)
+        text = self._to_text(content)
+        raw_result = None
+        try:
+            raw_result = self.secure_store.write(
+                text,
+                source_type=source_type,
+                source_id=source_id,
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                principal=principal,
+                metadata={"operation": MemoryOperation.WRITE.value, **metadata},
+            )
+        except SecureMemoryWriteError as exc:
+            raw_result = exc.result
+
+        decision = self._decision_value(raw_result.action)
+        allowed = raw_result.allowed
+        safe_text = raw_result.safe_content if allowed else ""
+        protected = MemoryProtectionResult(
+            allowed=allowed,
+            content=self._restore_content_shape(content, safe_text),
+            original_content=content,
+            decision=decision,
+            operation=MemoryOperation.WRITE.value,
+            raw_result=raw_result,
+            reason=raw_result.enforcement.reason,
+            warnings=self._dlp_warnings(raw_result),
+            metadata={
+                "source_type": source_type,
+                "source_id": source_id,
+                "secure_store": True,
+                **raw_result.metadata,
+            },
+        )
+        return self._apply_threat_action(protected, on_threat)
+
+    def _protect_secure_read(
+        self,
+        content: Any,
+        *,
+        operation: MemoryOperation,
+        on_threat: str,
+        **context: Any,
+    ) -> MemoryProtectionResult:
+        source_type, source_id, agent_id, _tenant_id, _principal, metadata = self._extract_context(context)
+        entry = MemoryEntry(
+            content=self._to_text(content),
+            source_type=source_type,
+            source_id=source_id,
+            metadata={"operation": operation.value, **metadata},
+        )
+        checked = self.secure_store.enforcer.on_memory_read(
+            [entry],
+            query=str(metadata.get("query", "")),
+            agent_id=agent_id or self.secure_store.agent_id,
+        )
+        enforcement = checked[0].enforcement
+        self._audit_secure_boundary(
+            event="memory_read_adapter",
+            action=enforcement.action.value,
+            allowed=enforcement.allowed,
+            boundary="memory_read",
+            source_type=source_type,
+            source_id=source_id,
+            risk_score=enforcement.risk_score,
+            was_sanitized=enforcement.was_sanitized,
+            reason=enforcement.reason,
+        )
+        protected = self._protection_from_enforcement(
+            enforcement,
+            original=content,
+            operation=operation,
+            metadata={"source_type": source_type, "source_id": source_id, "secure_store": True},
+        )
+        return self._apply_threat_action(protected, on_threat)
+
+    def _protect_secure_tool_result(
+        self,
+        content: Any,
+        *,
+        on_threat: str,
+        **context: Any,
+    ) -> MemoryProtectionResult:
+        tool_name = str(context.pop("tool_name", context.pop("source_id", "tool")))
+        agent_id = context.pop("agent_id", None)
+        enforcement = self.secure_store.guard_tool_result(
+            tool_name,
+            content,
+            agent_id=agent_id,
+            raise_on_block=False,
+        )
+        protected = self._protection_from_enforcement(
+            enforcement,
+            original=content,
+            operation=MemoryOperation.TOOL_RESULT,
+            metadata={"tool_name": tool_name, "secure_store": True, **context},
+        )
+        return self._apply_threat_action(protected, on_threat)
+
+    def _protect_legacy(
+        self,
+        content: Any,
+        *,
+        operation: MemoryOperation,
+        on_threat: str,
+        **context: Any,
+    ) -> MemoryProtectionResult:
         source_type = context.pop("source_type", self.default_source_type)
         source_id = context.pop("source_id", self.default_source_id)
         text = self._to_text(content)
         metadata = {"operation": operation.value, **context}
-        raw_result = self.guard.process(
+        raw_result = self._legacy_guard.process(
             text,
             source_type=source_type,
             source_id=source_id,
@@ -304,7 +549,7 @@ class UniversalMemoryGuard:
             raw_result=raw_result,
             reason=getattr(raw_result, "block_reason", None),
             warnings=list(getattr(raw_result, "warnings", []) or []),
-            metadata={"source_type": source_type, "source_id": source_id},
+            metadata={"source_type": source_type, "source_id": source_id, "legacy_guard": True},
         )
         return self._apply_threat_action(protected, on_threat)
 
@@ -326,6 +571,54 @@ class UniversalMemoryGuard:
             raise MemoryBlockedError(result.reason or "Memgar blocked unsafe memory content", result)
         raise ValueError(f"Unsupported threat action: {on_threat}")
 
+    def _protection_from_enforcement(
+        self,
+        enforcement: EnforcementResult,
+        *,
+        original: Any,
+        operation: MemoryOperation,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> MemoryProtectionResult:
+        decision = self._decision_value(enforcement.action)
+        safe_text = enforcement.safe_content if enforcement.allowed else ""
+        return MemoryProtectionResult(
+            allowed=enforcement.allowed,
+            content=self._restore_content_shape(original, safe_text),
+            original_content=original,
+            decision=decision,
+            operation=operation.value,
+            raw_result=enforcement,
+            reason=enforcement.reason,
+            warnings=[],
+            metadata=metadata or {},
+        )
+
+    def _extract_context(
+        self,
+        context: dict[str, Any],
+    ) -> tuple[str, Optional[str], Optional[str], str, str, dict[str, Any]]:
+        source_type = context.pop("source_type", self.default_source_type)
+        source_id = context.pop("source_id", self.default_source_id)
+        agent_id = context.pop("agent_id", None)
+        tenant_id = str(context.pop("tenant_id", ""))
+        principal = str(context.pop("principal", ""))
+        user_metadata = dict(context.pop("metadata", {}) or {})
+        user_metadata.update(context)
+        return source_type, source_id, agent_id, tenant_id, principal, user_metadata
+
+    def _audit_secure_boundary(self, **payload: Any) -> None:
+        audit = getattr(self.secure_store, "_log_boundary_audit", None)
+        if callable(audit):
+            audit(**payload)
+
+    @staticmethod
+    def _dlp_warnings(raw_result: Any) -> list[str]:
+        findings = list(getattr(getattr(raw_result, "dlp", None), "findings", []) or [])
+        if not findings:
+            return []
+        labels = sorted({str(getattr(item, "label", "unknown")) for item in findings})
+        return [f"DLP redacted: {', '.join(labels)}"]
+
     @staticmethod
     def _decision_value(decision: Any) -> str:
         return getattr(decision, "value", str(decision))
@@ -341,6 +634,16 @@ class UniversalMemoryGuard:
         if isinstance(record, dict) and "content" in record:
             return record["content"]
         return getattr(record, "content", record)
+
+    @staticmethod
+    def _replace_record_content(record: Any, safe_content: Any) -> Any:
+        if isinstance(record, str):
+            return safe_content
+        if isinstance(record, dict) and "content" in record:
+            updated = dict(record)
+            updated["content"] = safe_content
+            return updated
+        return record
 
     @staticmethod
     def _to_text(content: Any) -> str:
