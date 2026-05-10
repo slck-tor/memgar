@@ -22,7 +22,7 @@ import hashlib
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from memgar.models import MemoryEntry
 from memgar.runtime import EnforcementAction, EnforcementResult, MemoryRuntimeEnforcer, RuntimePolicy
@@ -319,6 +319,8 @@ class SecureMemoryStore:
             safe_content = dlp_result.safe_content
             if dlp_result.blocked:
                 action = EnforcementAction.BLOCK
+            elif dlp_result.was_redacted and action == EnforcementAction.ALLOW:
+                action = EnforcementAction.SANITIZE
 
         result = SecureWriteResult(
             entry_id=self._make_entry_id(safe_content, source_id),
@@ -369,6 +371,7 @@ class SecureMemoryStore:
             verification = self.vault.verify_current()
             if not verification.is_valid:
                 result.action = EnforcementAction.BLOCK
+                result.metadata["security_action"] = EnforcementAction.BLOCK.value
                 result.metadata["vault_verify_failed"] = True
                 result.metadata["vault_violations"] = getattr(verification, "violations", [])
 
