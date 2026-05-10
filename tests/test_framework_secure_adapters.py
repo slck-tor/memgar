@@ -162,6 +162,39 @@ def test_openai_agents_adapter_sanitizes_runner_input():
     assert guard.memory_guard.secure_store.last_result.action.value == "sanitize"
 
 
+def test_openai_agents_adapter_sanitizes_nested_structured_input():
+    runner = AgentsRunner()
+    guard = MemgarOpenAIAgentsGuard(analyzer=AllowAnalyzer())
+
+    guard.run_sync(
+        runner,
+        OpenAIAgent(),
+        {
+            "message": "contact ada@example.com",
+            "metadata": {"note": "backup ada@example.com"},
+            "items": [{"value": "route ada@example.com to the agent"}],
+        },
+    )
+
+    assert runner.input == {
+        "message": "contact [REDACTED:EMAIL]",
+        "metadata": {"note": "backup [REDACTED:EMAIL]"},
+        "items": [{"value": "route [REDACTED:EMAIL] to the agent"}],
+    }
+    assert guard.stats.inputs_scanned == 3
+    assert guard.stats.by_agent == {"Assistant": 3}
+
+
+def test_openai_agents_adapter_can_skip_tool_result_scanning():
+    guard = MemgarOpenAIAgentsGuard(analyzer=AllowAnalyzer(), scan_tool_results=False)
+
+    result = guard.guard_tool_result("lookup", "contact ada@example.com", agent=OpenAIAgent())
+
+    assert result == "contact ada@example.com"
+    assert guard.stats.tool_results_scanned == 0
+    assert guard.stats.by_agent == {}
+
+
 def test_openai_agents_adapter_blocks_unsafe_input():
     guard = MemgarOpenAIAgentsGuard(analyzer=BlockAnalyzer())
 
