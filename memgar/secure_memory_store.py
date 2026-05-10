@@ -11,9 +11,13 @@ backend and enforces the same pipeline before persistence:
       -> MemoryVault / MemoryLedger registration
       -> backend write
 
+Reads, retrieval chunks, and tool results can also be routed through the same
+runtime enforcer before they enter model context.
+
 Direct writes to the wrapped backend bypass this protection. Production agent
 integrations should expose only SecureMemoryStore to application code and keep
-the raw backend private.
+the raw backend private. Raw backend access is disabled by default and must be
+requested explicitly through unsafe_backend(...), which records an audit event.
 """
 
 from __future__ import annotations
@@ -22,10 +26,10 @@ import hashlib
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from memgar.models import MemoryEntry
-from memgar.runtime import EnforcementAction, EnforcementResult, MemoryRuntimeEnforcer, RuntimePolicy
+from memgar.runtime import ChunkResult, EnforcementAction, EnforcementResult, MemoryRuntimeEnforcer, RuntimePolicy
 
 
 @dataclass
@@ -178,6 +182,15 @@ class SecureMemoryStorePolicy:
     audit_content_preview_chars: int = 160
     snapshot_every: int = 0
     verify_vault_before_write: bool = False
+    scan_reads: bool = True
+    scan_retrievals: bool = True
+    scan_tool_results: bool = True
+    include_blocked_reads: bool = False
+    include_blocked_retrievals: bool = False
+    allow_unscanned_reads: bool = False
+    allow_unscanned_retrievals: bool = False
+    allow_unscanned_tool_results: bool = False
+    allow_raw_backend_access: bool = False
 
 
 @dataclass
@@ -233,6 +246,18 @@ class SecureWriteResult:
         }
 
 
+class SecureMemoryBoundaryError(Exception):
+    """Raised when a secure memory boundary refuses unsafe data flow."""
+
+    def __init__(self, message: str, enforcement: Optional[EnforcementResult] = None) -> None:
+        super().__init__(message)
+        self.enforcement = enforcement
+
+
+class SecureMemoryBypassError(SecureMemoryBoundaryError):
+    """Raised when raw or unscanned access is requested without an explicit escape hatch."""
+
+
 class SecureMemoryWriteError(Exception):
     """Raised when SecureMemoryStore refuses to persist a write."""
 
@@ -242,10 +267,13 @@ class SecureMemoryWriteError(Exception):
 
 
 class SecureMemoryStore:
-    """Backend-agnostic secure memory write boundary.
+    """Backend-agnostic secure memory boundary.
 
     The wrapped backend can be a Memgar MemoryStore, a MemoryLedger, a list,
     a dict, or any object exposing add(), append(), save(), or write().
+
+    Raw backend access is intentionally not exposed through normal operation.
+    Use unsafe_backend(reason=...) only for controlled migrations or debugging.
     """
 
     def __init__(
@@ -265,7 +293,7 @@ class SecureMemoryStore:
         policy: Optional[SecureMemoryStorePolicy] = None,
         agent_id: str = "default",
     ) -> None:
-        self.backend = backend
+        self._backend = backend
         self.policy = policy or SecureMemoryStorePolicy()
         self.enforcer = enforcer or MemoryRuntimeEnforcer(
             analyzer=analyzer,
@@ -284,12 +312,51 @@ class SecureMemoryStore:
         self._last_result: Optional[SecureWriteResult] = None
 
     @property
+    def backend(self) -> Any:
+        """Unsafe raw backend escape hatch kept for legacy callers.
+
+        Access is blocked by default. Prefer unsafe_backend(reason=...) because
+        it forces a clearer reason into the audit trail.
+        """
+
+        return self.unsafe_backend(reason="legacy backend property access")
+
+    @backend.setter
+    def backend(self, value: Any) -> None:
+        self._backend = value
+
+    @property
     def audit_events(self) -> List[Dict[str, Any]]:
         return list(self._audit_events)
 
     @property
     def last_result(self) -> Optional[SecureWriteResult]:
         return self._last_result
+
+    def unsafe_backend(self, *, reason: str, principal: str = "") -> Any:
+        """Return the raw backend only when explicitly enabled by policy.
+
+        This exists for migrations, diagnostics, or advanced integrations that
+        need temporary direct backend access. It records an audit event whether
+        access is granted or denied.
+        """
+
+        allowed = self.policy.allow_raw_backend_access
+        self._log_boundary_audit(
+            event="raw_backend_access",
+            action="allow" if allowed else "block",
+            allowed=allowed,
+            boundary="unsafe_backend",
+            reason=reason or "unspecified",
+            principal=principal,
+            warning="raw backend access bypasses Memgar controls",
+        )
+        if not allowed:
+            raise SecureMemoryBypassError(
+                "Raw backend access is disabled. Use SecureMemoryStore methods or set "
+                "SecureMemoryStorePolicy(allow_raw_backend_access=True) for an audited escape hatch."
+            )
+        return self._backend
 
     def validate_write(
         self,
@@ -395,7 +462,7 @@ class SecureMemoryStore:
             metadata=result.metadata,
         )
         result.backend_result = self._write_backend(entry, result.entry_id or self._make_entry_id(result.safe_content, source_id))
-        result.wrote_to_backend = self.backend is not None
+        result.wrote_to_backend = self._backend is not None
 
         if self.ledger is not None:
             self.ledger.append(result.safe_content, metadata=result.metadata, entry_id=result.entry_id)
@@ -427,16 +494,38 @@ class SecureMemoryStore:
 
         return self.write(content, **kwargs)
 
-    def get_entries(self, *, scan: bool = True, include_blocked: bool = False) -> List[MemoryEntry]:
-        """Read entries from backend and optionally re-scan before returning."""
+    def get_entries(self, *, scan: Optional[bool] = None, include_blocked: Optional[bool] = None) -> List[MemoryEntry]:
+        """Read entries from backend and scan before returning by default."""
 
+        should_scan = self.policy.scan_reads if scan is None else scan
+        include = self.policy.include_blocked_reads if include_blocked is None else include_blocked
         entries = self._read_backend_entries()
-        if not scan:
+        if not should_scan:
+            self._log_boundary_audit(
+                event="unscanned_memory_read",
+                action="allow" if self.policy.allow_unscanned_reads else "block",
+                allowed=self.policy.allow_unscanned_reads,
+                boundary="memory_read",
+                entry_count=len(entries),
+                warning="unscanned reads can reintroduce memory poisoning into context",
+            )
+            if not self.policy.allow_unscanned_reads:
+                raise SecureMemoryBypassError(
+                    "Unscanned memory reads are disabled. Use get_entries() with scanning enabled "
+                    "or set allow_unscanned_reads=True for an audited escape hatch."
+                )
             return entries
+
         checked = self.enforcer.on_memory_read(entries, agent_id=self.agent_id)
         safe_entries: List[MemoryEntry] = []
+        blocked = 0
+        sanitized = 0
         for item in checked:
-            if item.allowed or include_blocked:
+            if item.enforcement.blocked or item.enforcement.quarantined:
+                blocked += 1
+            if item.enforcement.was_sanitized:
+                sanitized += 1
+            if item.allowed or include:
                 original = item.chunk
                 safe_entries.append(MemoryEntry(
                     content=item.safe_text,
@@ -444,13 +533,110 @@ class SecureMemoryStore:
                     source_id=getattr(original, "source_id", None),
                     metadata=dict(getattr(original, "metadata", {}) or {}),
                 ))
+        self._log_boundary_audit(
+            event="memory_read",
+            action="allow",
+            allowed=True,
+            boundary="memory_read",
+            entry_count=len(entries),
+            returned_count=len(safe_entries),
+            blocked_count=blocked,
+            sanitized_count=sanitized,
+        )
         return safe_entries
+
+    def guard_retrieval(
+        self,
+        chunks: Sequence[Any],
+        *,
+        query: str = "",
+        agent_id: Optional[str] = None,
+        top_k: Optional[int] = None,
+        include_blocked: Optional[bool] = None,
+    ) -> List[ChunkResult]:
+        """Scan retrieved chunks before they enter model context."""
+
+        include = self.policy.include_blocked_retrievals if include_blocked is None else include_blocked
+        if not self.policy.scan_retrievals:
+            self._log_boundary_audit(
+                event="unscanned_retrieval",
+                action="allow" if self.policy.allow_unscanned_retrievals else "block",
+                allowed=self.policy.allow_unscanned_retrievals,
+                boundary="vector_retrieval",
+                entry_count=len(chunks),
+                warning="unscanned retrieval chunks can poison model context",
+            )
+            if not self.policy.allow_unscanned_retrievals:
+                raise SecureMemoryBypassError(
+                    "Unscanned retrievals are disabled. Keep scan_retrievals=True or set "
+                    "allow_unscanned_retrievals=True for an audited escape hatch."
+                )
+        checked = self.enforcer.on_vector_retrieval(
+            chunks,
+            query=query,
+            agent_id=agent_id or self.agent_id,
+            top_k=top_k,
+        )
+        returned = checked if include else [item for item in checked if item.allowed]
+        blocked = len([item for item in checked if not item.allowed])
+        sanitized = len([item for item in checked if item.enforcement.was_sanitized])
+        self._log_boundary_audit(
+            event="vector_retrieval",
+            action="allow",
+            allowed=True,
+            boundary="vector_retrieval",
+            entry_count=len(chunks),
+            returned_count=len(returned),
+            blocked_count=blocked,
+            sanitized_count=sanitized,
+            query_preview=query[:120],
+        )
+        return returned
+
+    def guard_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        *,
+        agent_id: Optional[str] = None,
+        raise_on_block: bool = True,
+    ) -> EnforcementResult:
+        """Scan a tool/function result before the agent trusts it."""
+
+        if not self.policy.scan_tool_results:
+            self._log_boundary_audit(
+                event="unscanned_tool_result",
+                action="allow" if self.policy.allow_unscanned_tool_results else "block",
+                allowed=self.policy.allow_unscanned_tool_results,
+                boundary="tool_result",
+                tool_name=tool_name,
+                warning="unscanned tool results can inject instructions into agent context",
+            )
+            if not self.policy.allow_unscanned_tool_results:
+                raise SecureMemoryBypassError(
+                    "Unscanned tool results are disabled. Keep scan_tool_results=True or set "
+                    "allow_unscanned_tool_results=True for an audited escape hatch."
+                )
+        enforcement = self.enforcer.on_tool_result(tool_name, result, agent_id=agent_id or self.agent_id)
+        self._log_boundary_audit(
+            event="tool_result",
+            action=enforcement.action.value,
+            allowed=enforcement.allowed,
+            boundary="tool_result",
+            tool_name=tool_name,
+            risk_score=enforcement.risk_score,
+            was_sanitized=enforcement.was_sanitized,
+            reason=enforcement.reason,
+        )
+        if enforcement.blocked and raise_on_block:
+            raise SecureMemoryBoundaryError("Secure tool result blocked", enforcement=enforcement)
+        return enforcement
 
     def stats(self) -> Dict[str, Any]:
         return {
             "audit_events": len(self._audit_events),
             "last_action": self._last_result.action.value if self._last_result else None,
-            "backend": type(self.backend).__name__ if self.backend is not None else None,
+            "backend": type(self._backend).__name__ if self._backend is not None else None,
             "ledger_enabled": self.ledger is not None,
             "vault_enabled": self.vault is not None,
         }
@@ -466,7 +652,7 @@ class SecureMemoryStore:
         return DLPResult(original_content=content, safe_content=content)
 
     def _write_backend(self, entry: MemoryEntry, entry_id: str) -> Any:
-        backend = self.backend
+        backend = self._backend
         if backend is None:
             return entry_id
         if isinstance(backend, list):
@@ -489,7 +675,7 @@ class SecureMemoryStore:
         raise TypeError("backend must expose add(), append(), save(), write(), or be list/dict")
 
     def _read_backend_entries(self) -> List[MemoryEntry]:
-        backend = self.backend
+        backend = self._backend
         if backend is None:
             return []
         if hasattr(backend, "get_entries"):
@@ -520,7 +706,7 @@ class SecureMemoryStore:
             "dlp": result.dlp.to_dict(),
             "ts": time.time(),
         }
-        self._audit_events.append(payload)
+        self._append_audit(payload)
         result.audit_logged = True
         if self.auditor is not None and hasattr(self.auditor, "log_memory_operation"):
             self.auditor.log_memory_operation(
@@ -530,6 +716,26 @@ class SecureMemoryStore:
                 threat_detected=result.action != EnforcementAction.ALLOW,
                 details=payload,
             )
+
+    def _log_boundary_audit(self, **payload: Any) -> None:
+        payload.setdefault("ts", time.time())
+        payload.setdefault("memgar_write_boundary", "SecureMemoryStore")
+        payload.setdefault("memgar_bypass_warning", "direct backend writes bypass Memgar controls")
+        self._append_audit(payload)
+
+    def _append_audit(self, payload: Dict[str, Any]) -> None:
+        self._audit_events.append(payload)
+        if self.auditor is not None and hasattr(self.auditor, "log_memory_operation"):
+            try:
+                self.auditor.log_memory_operation(
+                    operation=str(payload.get("event", "memory_boundary")),
+                    content_preview=str(payload.get("content_preview", "")),
+                    entry_id=str(payload.get("entry_id", "")),
+                    threat_detected=payload.get("action") not in ("allow", EnforcementAction.ALLOW),
+                    details=payload,
+                )
+            except TypeError:
+                pass
 
     @staticmethod
     def _make_entry_id(content: str, source_id: Optional[str]) -> str:
@@ -598,6 +804,8 @@ __all__ = [
     "DLPPolicy",
     "DLPRedactor",
     "DLPResult",
+    "SecureMemoryBoundaryError",
+    "SecureMemoryBypassError",
     "SecureMemoryStore",
     "SecureMemoryStorePolicy",
     "SecureMemoryWriteError",
