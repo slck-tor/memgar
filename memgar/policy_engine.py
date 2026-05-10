@@ -894,6 +894,11 @@ class PolicyEngine:
     def _enforce_floor(ctx: PolicyContext, decision: PolicyDecision, floor: PolicyVerdict) -> PolicyDecision:
         if _VERDICT_RANK[floor] <= _VERDICT_RANK[decision.verdict]:
             return decision
+        # SANITIZE is a security action (content is cleaned, not passed through as-is).
+        # Allow explicit SANITIZE rules to override a BLOCK floor — the gateway will
+        # still fall back to BLOCK if the sanitizer produces no safe rewrite.
+        if decision.verdict == PolicyVerdict.SANITIZE:
+            return decision
         return PolicyDecision(
             verdict=floor,
             reason=f"security floor {floor.value} overrides rule {decision.matched_rule}: {decision.reason}",

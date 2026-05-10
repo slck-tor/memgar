@@ -43,6 +43,34 @@ logger = logging.getLogger("memgar.gateway")
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _extract_worst_text(payload: Dict[str, Any]) -> str:
+    """Return the first user/assistant message text for change-detection."""
+    texts = _extract_input_texts(payload)
+    for t in texts:
+        if t.get("role") in ("user", "assistant"):
+            return t.get("content", "")
+    return texts[0].get("content", "") if texts else ""
+
+
+def _flatten_dict_values(obj: Any, _depth: int = 0) -> List[str]:
+    """Recursively extract string leaves from a nested dict/list."""
+    if _depth > 8:
+        return []
+    if isinstance(obj, str):
+        return [obj] if obj else []
+    if isinstance(obj, dict):
+        out: List[str] = []
+        for v in obj.values():
+            out.extend(_flatten_dict_values(v, _depth + 1))
+        return out
+    if isinstance(obj, list):
+        out = []
+        for item in obj:
+            out.extend(_flatten_dict_values(item, _depth + 1))
+        return out
+    return []
+
+
 def _extract_input_texts(payload: Dict[str, Any]) -> List[Dict[str, str]]:
     """Return [{role, content}, ...] for every scannable text in a request.
 
@@ -75,6 +103,17 @@ def _extract_input_texts(payload: Dict[str, Any]) -> List[Dict[str, str]]:
                 for blk in content:
                     if isinstance(blk, dict) and isinstance(blk.get("text"), str):
                         out.append({"role": role, "content": blk["text"]})
+            # tool_calls — scan both JSON-string and dict arguments
+            for tc in m.get("tool_calls", []) or []:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function", {}) or {}
+                args = fn.get("arguments", "")
+                if isinstance(args, str) and args:
+                    out.append({"role": role, "content": args})
+                elif isinstance(args, dict):
+                    for text in _flatten_dict_values(args):
+                        out.append({"role": role, "content": text})
 
     # Legacy single-prompt fields
     for key in ("prompt", "input", "query"):
@@ -331,6 +370,14 @@ class Gateway:
             )
         if max_risk >= ip.sanitize_risk_score:
             sanitised_payload = self._materialize_sanitize(payload)
+            original_text = worst_text
+            sanitised_text = _extract_worst_text(sanitised_payload)
+            if sanitised_text == original_text:
+                return self._block_verdict(
+                    payload=payload, risk=max_risk,
+                    reason=worst_explanation or "sanitization produced no safe rewrite",
+                    matched_rule="risk_sanitize_no_rewrite", content=worst_text,
+                )
             return {
                 "decision": PolicyDecision.SANITIZE, "risk": max_risk,
                 "reason": worst_explanation, "payload": sanitised_payload,

@@ -170,7 +170,7 @@ class LLMResult:
 
 DEFAULT_MODELS: Dict[str, List[str]] = {
     "openai":            ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
-    "anthropic":         ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"],
+    "anthropic":         ["claude-3-5-haiku-20241022", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"],
     "azure":             ["gpt-4o", "gpt-4-turbo", "gpt-35-turbo"],
     "google":            ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
     "mistral":           ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"],
@@ -227,9 +227,9 @@ MODEL_COSTS_USD_PER_1M: Dict[str, float] = {
     "gpt-4o":                       5.00,
     "gpt-4-turbo":                 10.00,
     "gpt-3.5-turbo":                0.75,
-    "claude-haiku-4-5-20251001":    0.80,
-    "claude-sonnet-4-6":            3.00,
-    "claude-opus-4-7":             15.00,
+    "claude-3-5-haiku-20241022":    1.00,
+    "claude-3-5-sonnet-20241022":   3.00,
+    "claude-3-haiku-20240307":      0.25,
     "gemini-1.5-flash":             0.10,
     "gemini-1.5-pro":               2.50,
     "llama-3.1-8b-instant":         0.05,

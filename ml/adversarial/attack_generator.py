@@ -66,7 +66,7 @@ class AttackGenerator:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-haiku-4-5-20251001",
+        model: str = "claude-3-5-haiku-20241022",
         offline_fallback: bool = True,
         seed: int = 42,
     ):

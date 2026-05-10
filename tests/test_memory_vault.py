@@ -36,7 +36,7 @@ def _signing_key():
     """Return (private_key, public_key_b64) if cryptography is available, else None."""
     try:
         return MemoryVault.generate_signing_key()
-    except ImportError:
+    except (ImportError, BaseException):
         return None, None
 
 
