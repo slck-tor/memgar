@@ -115,11 +115,14 @@ def test_secure_memory_store_redacts_dlp_before_backend_write():
     result = store.write("Contact alice@example.com for the weekly summary.")
 
     assert result.allowed
+    assert result.action.value == "sanitize"
     assert result.dlp.was_redacted
+    assert result.metadata["security_action"] == "sanitize"
     assert result.wrote_to_backend
     assert len(backend) == 1
     assert backend[0].content == "Contact [REDACTED:EMAIL] for the weekly summary."
     assert result.metadata["dlp_findings"][0]["label"] == "email"
+    assert store.audit_events[-1]["action"] == "sanitize"
 
 
 def test_secure_memory_store_blocks_high_severity_dlp():
