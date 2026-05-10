@@ -94,10 +94,9 @@ DEFAULT_MODELS: Dict[str, List[str]] = {
         "gpt-3.5-turbo",
     ],
     "anthropic": [
-        "claude-3-5-haiku-20241022",
-        "claude-3-5-sonnet-20241022",
-        "claude-3-haiku-20240307",
-        "claude-3-sonnet-20240229",
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-6",
+        "claude-opus-4-7",
     ],
     "azure": [
         "gpt-4o",
@@ -135,7 +134,7 @@ DEFAULT_MODELS: Dict[str, List[str]] = {
     "openrouter": [
         "meta-llama/llama-3.1-8b-instruct:free",
         "google/gemini-flash-1.5",
-        "anthropic/claude-3-haiku",
+        "anthropic/claude-sonnet-4-6",
         "openai/gpt-4o-mini",
     ],
     "ollama": [
