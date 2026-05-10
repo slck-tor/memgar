@@ -10,6 +10,7 @@ Agent Frameworks:
     - CrewAI: MemgarCrewGuard, secure_crew, secure_agent
     - AutoGen: MemgarAutoGenGuard
     - OpenAI Assistants: MemgarAssistantGuard
+    - OpenAI Agents SDK: MemgarOpenAIAgentsGuard
     - MCP: MemgarMCPGuard, MCP Server
 
 RAG Frameworks:
@@ -95,6 +96,20 @@ try:
 except ImportError:
     pass
 
+# OpenAI Agents SDK Integration
+OPENAI_AGENTS_AVAILABLE = False
+MemgarOpenAIAgentsGuard = None
+guard_openai_agents = None
+
+try:
+    from .openai_agents import (
+        MemgarOpenAIAgentsGuard,
+        guard_openai_agents,
+    )
+    OPENAI_AGENTS_AVAILABLE = True
+except ImportError:
+    pass
+
 # MCP Integration
 MCP_AVAILABLE = False
 MemgarMCPGuard = None
@@ -108,7 +123,7 @@ except ImportError:
     pass
 
 # =============================================================================
-# RAG FRAMEWORK INTEGRATIONS (Layer 3)
+# RAG FRAMEWORKS (Layer 3)
 # =============================================================================
 
 # LangChain RAG Integration
@@ -165,6 +180,7 @@ def get_available_integrations() -> dict:
         "crewai": CREWAI_AVAILABLE,
         "autogen": AUTOGEN_AVAILABLE,
         "openai_assistants": OPENAI_ASSISTANTS_AVAILABLE,
+        "openai_agents": OPENAI_AGENTS_AVAILABLE,
         "mcp": MCP_AVAILABLE,
 
         # RAG frameworks
@@ -186,6 +202,7 @@ def list_integrations() -> None:
     print(f"  CrewAI:             {'available' if status['crewai'] else 'missing (pip install crewai)'}")
     print(f"  AutoGen:            {'available' if status['autogen'] else 'missing (pip install pyautogen)'}")
     print(f"  OpenAI Assistants:  {'available' if status['openai_assistants'] else 'missing (pip install openai)'}")
+    print(f"  OpenAI Agents SDK:  {'available' if status['openai_agents'] else 'missing'}")
     print(f"  MCP:                {'available' if status['mcp'] else 'missing'}")
 
     print("\nRAG Frameworks:")
@@ -208,6 +225,7 @@ __all__ = [
     "CREWAI_AVAILABLE",
     "AUTOGEN_AVAILABLE",
     "OPENAI_ASSISTANTS_AVAILABLE",
+    "OPENAI_AGENTS_AVAILABLE",
     "MCP_AVAILABLE",
     "LANGCHAIN_RAG_AVAILABLE",
     "LLAMAINDEX_AVAILABLE",
@@ -235,6 +253,10 @@ __all__ = [
 
     # OpenAI Assistants
     "MemgarAssistantGuard",
+
+    # OpenAI Agents SDK
+    "MemgarOpenAIAgentsGuard",
+    "guard_openai_agents",
 
     # MCP
     "MemgarMCPGuard",
