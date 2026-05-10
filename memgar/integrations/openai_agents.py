@@ -203,6 +203,8 @@ class MemgarOpenAIAgentsGuard:
 
     def guard_tool_result(self, tool_name: str, result: Any, *, agent: Any = None) -> Any:
         """Guard a local function/tool result before it goes back to the agent."""
+        if not self._scan_tool_results:
+            return result
         agent_name = _agent_name(agent)
         return self._guard_structured(
             result,
@@ -232,19 +234,14 @@ class MemgarOpenAIAgentsGuard:
                 for item in value
             )
         if isinstance(value, dict):
-            updated: Dict[Any, Any] = dict(value)
-            for key in ("content", "text", "output", "value"):
-                if isinstance(updated.get(key), str):
-                    updated[key] = self._guard_text(
-                        updated[key],
-                        boundary=boundary,
-                        agent_name=agent_name,
-                        operation=operation,
-                    )
-            return updated
+            return {
+                key: self._guard_structured(item, boundary=boundary, agent_name=agent_name, operation=operation)
+                for key, item in value.items()
+            }
         return value
 
     def _guard_text(self, text: str, *, boundary: str, agent_name: str, operation: str) -> str:
+        self._stats.by_agent[agent_name] = self._stats.by_agent.get(agent_name, 0) + 1
         try:
             if operation == "tool_result":
                 protected = self._memory_guard.protect_tool_result(
