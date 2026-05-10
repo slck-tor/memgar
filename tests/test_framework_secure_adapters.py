@@ -164,7 +164,7 @@ def test_openai_agents_adapter_sanitizes_runner_input():
 
 def test_openai_agents_adapter_sanitizes_nested_structured_input():
     runner = AgentsRunner()
-    guard = MemgarOpenAIAgentsGuard(analyzer=AllowAnalyzer())
+    guard = MemgarOpenAIAgentsGuard(analyzer=AllowAnalyzer(), scan_outputs=False)
 
     guard.run_sync(
         runner,
