@@ -485,22 +485,21 @@ class PolicyEngine:
                 text. If omitted, callers must sanitize themselves.
         """
         self._audit_log = audit_log
-        self._agent_profiles: Dict[str, str] = {}       # agent_id → profile name
-        self._tenant_profiles: Dict[str, str] = {}      # tenant_id → profile name
-        self._custom_rules: List[PolicyRule] = []        # operator-added rules
-        self._profile_name = profile
+        self._agent_profiles: Dict[str, str] = {}
+        self._tenant_profiles: Dict[str, str] = {}
+        self._custom_rules: List[PolicyRule] = []
+        self._profile_name = profile if profile in _BUILT_IN_PROFILES else "balanced"
+        if profile not in _BUILT_IN_PROFILES:
+            logger.warning("Unknown profile %r - falling back to 'balanced'", profile)
 
         # Enforcement backends
         self._quarantine_store = quarantine_store
         self._review_notifier = review_notifier
         self._sanitizer = sanitizer
 
-        # Load base profile rules
-        self._profile_rules: List[PolicyRule] = self._load_profile(profile)
-
-        if extra_rules:
-            for r in extra_rules:
-                self._custom_rules.append(r)
+        self._profile_rules: List[PolicyRule] = self._load_profile(self._profile_name)
+        for rule in extra_rules or []:
+            self.add_rule(rule)
 
     # ── backend wiring (post-construction) ────────────────────────────────────
 
@@ -682,21 +681,20 @@ class PolicyEngine:
         If the agent or tenant has a profile override, the threshold rules
         are temporarily replaced for this evaluation.
         """
-        rules = self._sorted_rules(ctx)
+        floor = self._baseline_floor(ctx)
 
         decision: Optional[PolicyDecision] = None
-        for rule in rules:
+        for rule in self._sorted_rules(ctx):
             evaluated = rule.evaluate(ctx)
             if evaluated is not None:
-                decision = evaluated
+                decision = self._enforce_floor(ctx, evaluated, floor)
                 break
 
         if decision is None:
-            # Should never reach here (catch_all_allow always fires) but be safe
             decision = PolicyDecision(
-                verdict=PolicyVerdict.ALLOW,
-                reason="fallback allow",
-                matched_rule="__fallback__",
+                verdict=floor,
+                reason="baseline floor fallback",
+                matched_rule="__baseline_floor__",
                 ctx=ctx,
             )
 
@@ -865,6 +863,44 @@ class PolicyEngine:
 
         all_rules = self._custom_rules + base_rules
         return sorted(all_rules, key=lambda r: r.priority)
+
+    def _profile_for_context(self, ctx: Optional[PolicyContext]) -> PolicyProfile:
+        profile_name = self._profile_name
+        if ctx is not None:
+            profile_name = (
+                self._agent_profiles.get(ctx.agent_id)
+                or self._tenant_profiles.get(ctx.tenant_id)
+                or profile_name
+            )
+        return _BUILT_IN_PROFILES.get(profile_name, _BUILT_IN_PROFILES["balanced"])
+
+    def _baseline_floor(self, ctx: PolicyContext) -> PolicyVerdict:
+        profile = self._profile_for_context(ctx)
+        if ctx.canary_leaks > 0:
+            return PolicyVerdict.BLOCK
+        if ctx.analyzer_decision == "block":
+            return PolicyVerdict.BLOCK
+        if ctx.risk_score >= profile.extreme_risk_score:
+            return PolicyVerdict.BLOCK
+        if ctx.risk_score >= profile.block_risk_score:
+            return PolicyVerdict.BLOCK
+        if ctx.analyzer_decision == "quarantine":
+            return PolicyVerdict.QUARANTINE
+        if ctx.risk_score >= profile.quarantine_risk_score:
+            return PolicyVerdict.SANITIZE if ctx.was_sanitized else PolicyVerdict.QUARANTINE
+        return PolicyVerdict.ALLOW
+
+    @staticmethod
+    def _enforce_floor(ctx: PolicyContext, decision: PolicyDecision, floor: PolicyVerdict) -> PolicyDecision:
+        if _VERDICT_RANK[floor] <= _VERDICT_RANK[decision.verdict]:
+            return decision
+        return PolicyDecision(
+            verdict=floor,
+            reason=f"security floor {floor.value} overrides rule {decision.matched_rule}: {decision.reason}",
+            matched_rule=f"{decision.matched_rule}+security_floor",
+            confidence=max(decision.confidence, 0.95),
+            ctx=ctx,
+        )
 
     @property
     def profile_name(self) -> str:

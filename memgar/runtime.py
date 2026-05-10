@@ -617,7 +617,7 @@ class MemoryRuntimeEnforcer:
                     s = InstructionSanitizer()
                     sr = s.sanitize(content)
                     if sr.was_modified:
-                        sanitized = sr.sanitized_text
+                        sanitized = sr.sanitized_content
                 except Exception:
                     pass
 
