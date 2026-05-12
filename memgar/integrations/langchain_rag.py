@@ -4,39 +4,29 @@ Memgar LangChain RAG Integration
 
 Trust-aware retrieval integration for LangChain.
 
-Provides:
-- MemgarRetriever: Drop-in replacement for any LangChain retriever
-- MemgarVectorStore: Trust-aware vector store wrapper
-- Trust-aware RAG chain helpers
-
-Example:
-    from langchain_openai import OpenAIEmbeddings
-    from langchain_community.vectorstores import FAISS
-    from memgar.integrations.langchain_rag import MemgarRetriever
-    
-    # Wrap your existing retriever
-    base_retriever = vector_store.as_retriever()
-    secure_retriever = MemgarRetriever(base_retriever)
-    
-    # Use in RAG chain
-    chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        retriever=secure_retriever,
-    )
+MemgarRetriever first applies trust-aware ranking, then routes the final
+LangChain Document outputs through UniversalMemoryGuard/SecureMemoryStore before
+those chunks can enter model context. This closes the retrieval-side memory
+poisoning loop where an already-poisoned vector store result is reintroduced into
+the prompt.
 """
 
+from __future__ import annotations
+
+import copy
+import hashlib
 import logging
-from typing import List, Dict, Optional, Any, Callable, Sequence
 from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Import base classes (handle if LangChain not installed)
 try:
-    from langchain_core.retrievers import BaseRetriever
-    from langchain_core.documents import Document
     from langchain_core.callbacks import CallbackManagerForRetrieverRun
+    from langchain_core.documents import Document
+    from langchain_core.retrievers import BaseRetriever
     from langchain_core.vectorstores import VectorStore
+
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
@@ -45,54 +35,29 @@ except ImportError:
     CallbackManagerForRetrieverRun = Any
     VectorStore = object
 
-from ..retriever import (
-    TrustAwareRetriever,
-    RetrievalMetadata,
-    RetrievalResult,
-    RetrievedDocument,
-    TemporalDecay,
-    DecayFunction,
-    RetrievalAnomalyDetector,
-)
+from ..retriever import RetrievalMetadata, TrustAwareRetriever
+from .universal import UniversalMemoryGuard
 
 
 class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
+    """Trust-aware and runtime-scanned LangChain retriever.
+
+    The adapter wraps any LangChain-compatible retriever. It keeps the existing
+    provenance/trust ranking layer and adds a second runtime retrieval firewall
+    over returned Document.page_content values.
     """
-    Trust-aware LangChain retriever.
-    
-    Drop-in replacement that adds:
-    - Trust-weighted ranking
-    - Temporal decay
-    - Anomaly detection
-    - Untrusted content filtering
-    
-    Example:
-        from langchain_community.vectorstores import Chroma
-        from memgar.integrations.langchain_rag import MemgarRetriever
-        
-        # Create base retriever
-        vector_store = Chroma.from_documents(docs, embeddings)
-        base_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
-        
-        # Wrap with Memgar
-        secure_retriever = MemgarRetriever(
-            base_retriever=base_retriever,
-            min_trust_score=0.3,
-            enable_temporal_decay=True,
-        )
-        
-        # Use normally
-        docs = secure_retriever.invoke("What is our refund policy?")
-    """
-    
-    # Pydantic fields for LangChain
+
     base_retriever: Any = None
     trust_retriever: Any = None
     return_metadata: bool = False
-    
+    on_anomaly: Any = None
+    memory_guard: Any = None
+    scan_retrieval_outputs: bool = True
+    agent_id: str = "langchain"
+
     class Config:
         arbitrary_types_allowed = True
-    
+
     def __init__(
         self,
         base_retriever: Any,
@@ -108,34 +73,44 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
         return_metadata: bool = False,
         metadata_store: Optional[Dict[str, RetrievalMetadata]] = None,
         on_anomaly: Optional[Callable] = None,
-        **kwargs
+        memory_guard: Optional[UniversalMemoryGuard] = None,
+        secure_store: Optional[Any] = None,
+        analyzer: Optional[Any] = None,
+        runtime_policy: Optional[Any] = None,
+        policy_engine: Optional[Any] = None,
+        dlp: Optional[Any] = None,
+        dlp_policy: Optional[Any] = None,
+        auditor: Optional[Any] = None,
+        agent_id: str = "langchain",
+        scan_retrieval_outputs: bool = True,
+        on_retrieval_threat: str = "drop",
+        allow_legacy_guard: bool = False,
+        guard: Optional[Any] = None,
+        **kwargs: Any,
     ):
-        """
-        Initialize Memgar retriever.
-        
-        Args:
-            base_retriever: LangChain retriever to wrap
-            min_trust_score: Minimum trust score (0-1)
-            trust_weight_factor: How much trust affects ranking
-            enable_temporal_decay: Enable time-based decay
-            decay_half_life_days: Half-life for decay
-            enable_anomaly_detection: Detect suspicious patterns
-            filter_flagged: Filter flagged documents
-            filter_high_risk: Filter high-risk documents
-            high_risk_threshold: Risk score threshold
-            top_k: Number of documents to return
-            return_metadata: Include Memgar metadata in doc.metadata
-            metadata_store: Pre-populated metadata store
-            on_anomaly: Callback for anomaly detection
-        """
         if LANGCHAIN_AVAILABLE:
             super().__init__(**kwargs)
-        
+
         self.base_retriever = base_retriever
         self.return_metadata = return_metadata
         self.on_anomaly = on_anomaly
-        
-        # Create trust-aware retriever
+        self.agent_id = agent_id
+        self.scan_retrieval_outputs = scan_retrieval_outputs
+        self.memory_guard = memory_guard or UniversalMemoryGuard(
+            guard=guard,
+            secure_store=secure_store,
+            analyzer=analyzer,
+            runtime_policy=runtime_policy,
+            policy_engine=policy_engine,
+            dlp=dlp,
+            dlp_policy=dlp_policy,
+            auditor=auditor,
+            agent_id=agent_id,
+            allow_legacy_guard=allow_legacy_guard,
+            on_read_threat=on_retrieval_threat,
+            default_source_type="langchain_retrieval",
+        )
+
         self.trust_retriever = TrustAwareRetriever(
             base_retriever=base_retriever,
             min_trust_score=min_trust_score,
@@ -148,73 +123,37 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
             high_risk_threshold=high_risk_threshold,
             top_k=top_k,
         )
-        
-        # Load metadata if provided
+
         if metadata_store:
             for doc_id, metadata in metadata_store.items():
                 self.trust_retriever.set_metadata(doc_id, metadata)
-    
+
     def _get_relevant_documents(
         self,
         query: str,
         *,
         run_manager: Optional[CallbackManagerForRetrieverRun] = None,
+        **kwargs: Any,
     ) -> List[Document]:
-        """
-        Get relevant documents with trust-aware ranking.
-        
-        This is the main retrieval method called by LangChain.
-        """
-        # Get trust-aware results
-        result = self.trust_retriever.retrieve(query)
-        
-        # Handle anomalies
+        """Get relevant documents with trust ranking and retrieval firewalling."""
+
+        result = self.trust_retriever.retrieve(query, **kwargs)
         if result.anomalies_detected > 0 and self.on_anomaly:
             self.on_anomaly(result.anomaly_details)
-        
-        # Convert to LangChain Documents
-        documents = []
-        for doc in result.documents:
-            # Build metadata
-            metadata = {
-                "doc_id": doc.doc_id,
-                "similarity_score": doc.similarity_score,
-                "trust_adjusted_score": doc.trust_adjusted_score,
-                "final_score": doc.final_score,
-                "is_trusted": doc.is_trusted,
-            }
-            
-            if self.return_metadata and doc.metadata:
-                metadata["memgar"] = doc.metadata.to_dict()
-            
-            # Preserve original metadata if present
-            if doc.metadata and doc.metadata.custom_data:
-                metadata.update(doc.metadata.custom_data)
-            
-            documents.append(Document(
-                page_content=doc.content,
-                metadata=metadata,
-            ))
-        
-        return documents
-    
-    # Alias for older LangChain versions
-    def get_relevant_documents(
-        self,
-        query: str,
-        **kwargs
-    ) -> List[Document]:
-        """Get relevant documents (legacy method)."""
+
+        documents = [self._document_from_retrieved(doc) for doc in result.documents]
+        return self._guard_documents(documents, query=query)
+
+    def get_relevant_documents(self, query: str, **kwargs: Any) -> List[Document]:
+        """Get relevant documents for older LangChain versions."""
+
         return self._get_relevant_documents(query, **kwargs)
-    
-    def invoke(
-        self,
-        input: str,
-        **kwargs
-    ) -> List[Document]:
-        """Invoke retriever (LangChain standard interface)."""
+
+    def invoke(self, input: str, **kwargs: Any) -> List[Document]:
+        """Invoke retriever using the LangChain standard interface."""
+
         return self._get_relevant_documents(input, **kwargs)
-    
+
     def set_document_metadata(
         self,
         doc_id: str,
@@ -223,14 +162,10 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
         created_at: Optional[datetime] = None,
         risk_score: int = 0,
         flagged: bool = False,
-        **extra
+        **extra: Any,
     ) -> None:
-        """
-        Set metadata for a document.
-        
-        Call this when adding documents to your vector store.
-        """
-        import hashlib
+        """Set metadata for a document after adding it to a vector store."""
+
         metadata = RetrievalMetadata(
             doc_id=doc_id,
             content_hash=hashlib.sha256(doc_id.encode()).hexdigest(),
@@ -242,90 +177,120 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
             custom_data=extra,
         )
         self.trust_retriever.set_metadata(doc_id, metadata)
-    
-    def set_metadata_from_provenance(
-        self,
-        doc_id: str,
-        provenance: Any,  # MemoryProvenance from Layer 2
-    ) -> None:
-        """Set metadata from Layer 2 provenance object."""
+
+    def set_metadata_from_provenance(self, doc_id: str, provenance: Any) -> None:
+        """Set metadata from a Layer 2 provenance object."""
+
         metadata = RetrievalMetadata(
             doc_id=doc_id,
             content_hash=provenance.content_hash,
-            trust_score=provenance.trust_score / 100,  # Convert 0-100 to 0-1
-            source_type=provenance.source.source_type.value if hasattr(provenance.source, 'source_type') else "unknown",
-            source_verified=provenance.source.verified if hasattr(provenance.source, 'verified') else False,
-            created_at=datetime.fromisoformat(provenance.created_at) if isinstance(provenance.created_at, str) else provenance.created_at,
+            trust_score=provenance.trust_score / 100,
+            source_type=(
+                provenance.source.source_type.value
+                if hasattr(provenance.source, "source_type")
+                else "unknown"
+            ),
+            source_verified=provenance.source.verified
+            if hasattr(provenance.source, "verified")
+            else False,
+            created_at=datetime.fromisoformat(provenance.created_at)
+            if isinstance(provenance.created_at, str)
+            else provenance.created_at,
             was_sanitized=provenance.was_sanitized,
             risk_score=provenance.risk_score,
             flagged=provenance.flagged_for_review,
             reviewed=provenance.reviewed_by is not None,
         )
         self.trust_retriever.set_metadata(doc_id, metadata)
-    
-    def get_retrieval_stats(self) -> Dict:
+
+    def get_retrieval_stats(self) -> Dict[str, Any]:
         """Get retrieval statistics."""
-        return self.trust_retriever.get_statistics()
-    
-    def get_anomaly_report(self) -> List[Dict]:
-        """Get detected anomalies."""
+
+        stats = self.trust_retriever.get_statistics()
+        stats["runtime_firewall_enabled"] = self.scan_retrieval_outputs
+        return stats
+
+    def get_anomaly_report(self) -> List[Dict[str, Any]]:
+        """Get detected retrieval anomalies."""
+
         if self.trust_retriever.anomaly_detector:
             return [
                 {
-                    "type": a.anomaly_type,
-                    "doc_id": a.doc_id,
-                    "severity": a.severity,
-                    "description": a.description,
-                    "timestamp": a.timestamp.isoformat(),
+                    "type": anomaly.anomaly_type,
+                    "doc_id": anomaly.doc_id,
+                    "severity": anomaly.severity,
+                    "description": anomaly.description,
+                    "timestamp": anomaly.timestamp.isoformat(),
                 }
-                for a in self.trust_retriever.anomaly_detector.get_all_anomalies()
+                for anomaly in self.trust_retriever.anomaly_detector.get_all_anomalies()
             ]
         return []
 
+    def _document_from_retrieved(self, doc: Any) -> Document:
+        metadata = {
+            "doc_id": doc.doc_id,
+            "similarity_score": doc.similarity_score,
+            "trust_adjusted_score": doc.trust_adjusted_score,
+            "final_score": doc.final_score,
+            "is_trusted": doc.is_trusted,
+        }
+        if self.return_metadata and doc.metadata:
+            metadata["memgar"] = doc.metadata.to_dict()
+        if doc.metadata and doc.metadata.custom_data:
+            metadata.update(doc.metadata.custom_data)
+        return _make_document(doc.content, metadata)
+
+    def _guard_documents(self, documents: List[Document], *, query: str) -> List[Document]:
+        if not self.scan_retrieval_outputs or not documents:
+            return documents
+
+        records = []
+        for index, doc in enumerate(documents):
+            metadata = _document_metadata(doc)
+            records.append(
+                {
+                    "content": _document_content(doc),
+                    "metadata": metadata,
+                    "doc_id": metadata.get("doc_id", str(index)),
+                    "_memgar_index": index,
+                }
+            )
+
+        safe_records = self.memory_guard.guard_retrieval_results(
+            records,
+            query=query,
+            top_k=len(records),
+            source_type="langchain_retrieval",
+            agent_id=self.agent_id,
+        )
+        safe_documents: List[Document] = []
+        for record in safe_records:
+            index = record.get("_memgar_index")
+            if index is None or index >= len(documents):
+                continue
+            safe_documents.append(_replace_document_content(documents[index], record.get("content", "")))
+        return safe_documents
+
 
 class MemgarVectorStoreRetriever(MemgarRetriever):
-    """
-    Trust-aware retriever that wraps a VectorStore directly.
-    
-    Example:
-        from langchain_community.vectorstores import FAISS
-        
-        vector_store = FAISS.from_documents(docs, embeddings)
-        retriever = MemgarVectorStoreRetriever(
-            vector_store=vector_store,
-            search_type="similarity",
-            search_kwargs={"k": 10}
-        )
-    """
-    
+    """Trust-aware retriever that wraps a LangChain VectorStore directly."""
+
+    vector_store: Any = None
+
     def __init__(
         self,
         vector_store: Any,
         search_type: str = "similarity",
-        search_kwargs: Optional[Dict] = None,
-        **kwargs
+        search_kwargs: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ):
-        """
-        Initialize with vector store.
-        
-        Args:
-            vector_store: LangChain VectorStore
-            search_type: "similarity" or "mmr"
-            search_kwargs: Search parameters
-        """
-        # Create base retriever from vector store
         base_retriever = vector_store.as_retriever(
             search_type=search_type,
-            search_kwargs=search_kwargs or {"k": 10}
+            search_kwargs=search_kwargs or {"k": 10},
         )
-        
         super().__init__(base_retriever=base_retriever, **kwargs)
         self.vector_store = vector_store
 
-
-# =============================================================================
-# RAG CHAIN HELPERS
-# =============================================================================
 
 def create_secure_rag_chain(
     llm: Any,
@@ -334,43 +299,27 @@ def create_secure_rag_chain(
     chain_type: str = "stuff",
     return_source_documents: bool = True,
     on_anomaly: Optional[Callable] = None,
+    **guard_kwargs: Any,
 ) -> Any:
-    """
-    Create a trust-aware RAG chain.
-    
-    Example:
-        from langchain_openai import ChatOpenAI
-        
-        llm = ChatOpenAI(model="gpt-4")
-        chain = create_secure_rag_chain(
-            llm=llm,
-            retriever=vector_store.as_retriever(),
-            min_trust_score=0.4,
-        )
-        
-        result = chain.invoke({"query": "What is our policy?"})
-    """
+    """Create a trust-aware and runtime-scanned RAG chain."""
+
     try:
         from langchain.chains import RetrievalQA
-    except ImportError:
-        raise ImportError("langchain is required for RAG chains")
-    
-    # Wrap retriever with Memgar
+    except ImportError as exc:
+        raise ImportError("langchain is required for RAG chains") from exc
+
     secure_retriever = MemgarRetriever(
         base_retriever=retriever,
         min_trust_score=min_trust_score,
         on_anomaly=on_anomaly,
+        **guard_kwargs,
     )
-    
-    # Create chain
-    chain = RetrievalQA.from_chain_type(
+    return RetrievalQA.from_chain_type(
         llm=llm,
         chain_type=chain_type,
         retriever=secure_retriever,
         return_source_documents=return_source_documents,
     )
-    
-    return chain
 
 
 def create_secure_conversational_chain(
@@ -379,96 +328,49 @@ def create_secure_conversational_chain(
     memory: Any,
     min_trust_score: float = 0.3,
     on_anomaly: Optional[Callable] = None,
+    **guard_kwargs: Any,
 ) -> Any:
-    """
-    Create a trust-aware conversational RAG chain.
-    
-    Example:
-        from langchain.memory import ConversationBufferMemory
-        
-        memory = ConversationBufferMemory(
-            memory_key="chat_history",
-            return_messages=True
-        )
-        
-        chain = create_secure_conversational_chain(
-            llm=llm,
-            retriever=retriever,
-            memory=memory,
-        )
-    """
+    """Create a conversational RAG chain with secured retriever and memory."""
+
     try:
         from langchain.chains import ConversationalRetrievalChain
-    except ImportError:
-        raise ImportError("langchain is required for conversational chains")
-    
-    # Wrap retriever
+    except ImportError as exc:
+        raise ImportError("langchain is required for conversational chains") from exc
+
+    from .langchain import MemgarMemoryGuard
+
+    shared_guard = guard_kwargs.get("memory_guard")
+    memory_guard_kwargs = {
+        key: value for key, value in guard_kwargs.items() if key != "memory_guard"
+    }
     secure_retriever = MemgarRetriever(
         base_retriever=retriever,
         min_trust_score=min_trust_score,
         on_anomaly=on_anomaly,
+        **guard_kwargs,
     )
-    
-    chain = ConversationalRetrievalChain.from_llm(
+    secure_memory = (
+        memory
+        if isinstance(memory, MemgarMemoryGuard)
+        else MemgarMemoryGuard(memory, memory_guard=shared_guard, **memory_guard_kwargs)
+    )
+    return ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=secure_retriever,
-        memory=memory,
+        memory=secure_memory,
         return_source_documents=True,
     )
-    
-    return chain
 
-
-# =============================================================================
-# DOCUMENT INGESTION WITH TRUST
-# =============================================================================
 
 class TrustAwareDocumentLoader:
-    """
-    Document loader that assigns trust metadata during ingestion.
-    
-    Example:
-        loader = TrustAwareDocumentLoader(
-            default_trust=0.5,
-            source_trust_map={
-                "internal": 0.9,
-                "partner": 0.7,
-                "external": 0.4,
-            }
-        )
-        
-        # Load with trust metadata
-        docs = loader.load_documents(
-            raw_docs,
-            source_type="internal"
-        )
-        
-        # Add to vector store
-        vector_store.add_documents(docs)
-        
-        # Register metadata with retriever
-        for doc in docs:
-            retriever.set_document_metadata(
-                doc_id=doc.metadata["doc_id"],
-                trust_score=doc.metadata["trust_score"],
-                source_type=doc.metadata["source_type"],
-            )
-    """
-    
+    """Document loader that assigns trust metadata during ingestion."""
+
     def __init__(
         self,
         default_trust: float = 0.5,
         source_trust_map: Optional[Dict[str, float]] = None,
         verified_domains: Optional[List[str]] = None,
     ):
-        """
-        Initialize loader.
-        
-        Args:
-            default_trust: Default trust for unknown sources
-            source_trust_map: Map of source_type to trust score
-            verified_domains: List of verified domains
-        """
         self.default_trust = default_trust
         self.source_trust_map = source_trust_map or {
             "system": 1.0,
@@ -480,27 +382,22 @@ class TrustAwareDocumentLoader:
             "unknown": 0.3,
         }
         self.verified_domains = set(verified_domains or [])
-    
+
     def _generate_doc_id(self, content: str) -> str:
-        """Generate document ID from content."""
-        import hashlib
         return f"doc_{hashlib.sha256(content.encode()).hexdigest()[:16]}"
-    
+
     def _get_trust_score(
         self,
         source_type: str,
         domain: Optional[str] = None,
         verified: bool = False,
     ) -> float:
-        """Get trust score for source."""
         if verified:
             return 0.95
-        
         if domain and domain in self.verified_domains:
             return 0.9
-        
         return self.source_trust_map.get(source_type, self.default_trust)
-    
+
     def load_documents(
         self,
         documents: List[Any],
@@ -510,43 +407,24 @@ class TrustAwareDocumentLoader:
         risk_score: int = 0,
         tags: Optional[List[str]] = None,
     ) -> List[Document]:
-        """
-        Load documents with trust metadata.
-        
-        Args:
-            documents: List of documents (strings, dicts, or Document objects)
-            source_type: Type of source
-            source_domain: Domain if applicable
-            verified: Whether source is verified
-            risk_score: Pre-computed risk score
-            tags: Optional tags
-            
-        Returns:
-            List of Documents with trust metadata
-        """
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("LangChain required for document loading")
-        
+
         trust_score = self._get_trust_score(source_type, source_domain, verified)
         now = datetime.now(timezone.utc)
-        
         processed_docs = []
         for doc in documents:
-            # Extract content
             if isinstance(doc, Document):
                 content = doc.page_content
                 existing_metadata = doc.metadata.copy()
             elif isinstance(doc, dict):
                 content = doc.get("content", doc.get("text", doc.get("page_content", "")))
-                existing_metadata = doc.get("metadata", {})
+                existing_metadata = dict(doc.get("metadata", {}) or {})
             else:
                 content = str(doc)
                 existing_metadata = {}
-            
-            # Generate doc_id
+
             doc_id = existing_metadata.get("doc_id") or self._generate_doc_id(content)
-            
-            # Build metadata
             metadata = {
                 **existing_metadata,
                 "doc_id": doc_id,
@@ -558,47 +436,89 @@ class TrustAwareDocumentLoader:
                 "risk_score": risk_score,
                 "tags": tags or [],
             }
-            
-            processed_docs.append(Document(
-                page_content=content,
-                metadata=metadata,
-            ))
-        
+            processed_docs.append(_make_document(content, metadata))
         return processed_docs
 
 
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
 def check_langchain_available() -> bool:
     """Check if LangChain is available."""
+
     return LANGCHAIN_AVAILABLE
 
 
-def sync_metadata_to_retriever(
-    retriever: MemgarRetriever,
-    documents: List[Document],
-) -> int:
-    """
-    Sync document metadata to retriever.
-    
-    Call this after adding documents to vector store.
-    
-    Returns:
-        Number of documents synced
-    """
+def sync_metadata_to_retriever(retriever: MemgarRetriever, documents: List[Document]) -> int:
+    """Sync document metadata to a MemgarRetriever."""
+
     count = 0
     for doc in documents:
-        metadata = doc.metadata
-        if "doc_id" in metadata:
-            retriever.set_document_metadata(
-                doc_id=metadata["doc_id"],
-                trust_score=metadata.get("trust_score", 0.5),
-                source_type=metadata.get("source_type", "unknown"),
-                created_at=datetime.fromisoformat(metadata["created_at"]) if "created_at" in metadata else None,
-                risk_score=metadata.get("risk_score", 0),
-                flagged=metadata.get("flagged", False),
-            )
-            count += 1
+        metadata = _document_metadata(doc)
+        if "doc_id" not in metadata:
+            continue
+        created_at = metadata.get("created_at")
+        retriever.set_document_metadata(
+            doc_id=metadata["doc_id"],
+            trust_score=metadata.get("trust_score", 0.5),
+            source_type=metadata.get("source_type", "unknown"),
+            created_at=datetime.fromisoformat(created_at) if created_at else None,
+            risk_score=metadata.get("risk_score", 0),
+            flagged=metadata.get("flagged", False),
+        )
+        count += 1
     return count
+
+
+def _make_document(content: str, metadata: Dict[str, Any]) -> Document:
+    return Document(page_content=content, metadata=metadata)
+
+
+def _document_content(doc: Any) -> str:
+    if isinstance(doc, dict):
+        return str(doc.get("page_content", doc.get("content", doc.get("text", ""))))
+    return str(getattr(doc, "page_content", getattr(doc, "content", getattr(doc, "text", ""))))
+
+
+def _document_metadata(doc: Any) -> Dict[str, Any]:
+    if isinstance(doc, dict):
+        return dict(doc.get("metadata", {}) or {})
+    return dict(getattr(doc, "metadata", {}) or {})
+
+
+def _replace_document_content(doc: Document, safe_content: Any) -> Document:
+    safe_text = _coerce_safe_content(safe_content)
+    if isinstance(doc, dict):
+        updated = dict(doc)
+        if "page_content" in updated:
+            updated["page_content"] = safe_text
+        elif "content" in updated:
+            updated["content"] = safe_text
+        else:
+            updated["page_content"] = safe_text
+        return updated
+    if hasattr(doc, "model_copy"):
+        try:
+            return doc.model_copy(update={"page_content": safe_text})
+        except Exception:
+            pass
+    if hasattr(doc, "copy"):
+        try:
+            return doc.copy(update={"page_content": safe_text})
+        except TypeError:
+            pass
+        except Exception:
+            pass
+    try:
+        cloned = copy.copy(doc)
+        setattr(cloned, "page_content", safe_text)
+        return cloned
+    except Exception:
+        logger.debug("Memgar: unable to clone LangChain Document for sanitized retrieval")
+    return _make_document(safe_text, _document_metadata(doc))
+
+
+def _coerce_safe_content(safe_content: Any) -> str:
+    if isinstance(safe_content, dict):
+        for key in ("page_content", "content", "text"):
+            value = safe_content.get(key)
+            if isinstance(value, str):
+                return value
+    return str(safe_content)

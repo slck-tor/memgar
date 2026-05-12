@@ -5,14 +5,15 @@ on LangChain, CrewAI, AutoGen, OpenAI Agents, MCP, or a specific vector store.
 
 The default adapter path uses SecureMemoryStore so custom integrations inherit
 Memgar's official write, read, retrieval, tool-result, DLP, and audit boundary.
-Passing an explicit legacy ``guard=...`` keeps older MemoryGuard-compatible test
-or migration code working without changing behavior.
+The legacy MemoryGuard path is still available as an explicit escape hatch via
+``allow_legacy_guard=True`` for migrations and compatibility tests.
 """
 
 from __future__ import annotations
 
 import inspect
 import json
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
@@ -22,6 +23,7 @@ from memgar.memory_guard import GuardDecision, MemoryGuard
 from memgar.models import MemoryEntry
 from memgar.runtime import EnforcementResult
 from memgar.secure_memory_store import (
+    SecureMemoryBypassError,
     SecureMemoryStore,
     SecureMemoryStorePolicy,
     SecureMemoryWriteError,
@@ -101,6 +103,7 @@ class UniversalMemoryGuard:
         dlp_policy: Optional[Any] = None,
         auditor: Optional[Any] = None,
         agent_id: str = "default",
+        allow_legacy_guard: bool = False,
         on_write_threat: str = "block",
         on_read_threat: str = "drop",
         on_tool_result_threat: str = "block",
@@ -125,7 +128,21 @@ class UniversalMemoryGuard:
             and dlp_policy is None
             and auditor is None
         )
+        if uses_legacy_guard and not allow_legacy_guard:
+            raise SecureMemoryBypassError(
+                "Legacy MemoryGuard usage bypasses the SecureMemoryStore boundary. "
+                "Use UniversalMemoryGuard() for secure defaults, pass secure_store=... for a "
+                "preconfigured secure boundary, or set allow_legacy_guard=True for an explicit "
+                "migration escape hatch."
+            )
         if uses_legacy_guard:
+            warnings.warn(
+                "UniversalMemoryGuard is using a legacy guard without SecureMemoryStore. "
+                "Memory writes will not receive SecureMemoryStore audit, DLP, vault, or raw-backend "
+                "bypass controls.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             self.secure_store: Optional[SecureMemoryStore] = None
             self._legacy_guard = guard or MemoryGuard(**guard_kwargs)
             self.guard = self._legacy_guard
@@ -134,8 +151,8 @@ class UniversalMemoryGuard:
         if guard_kwargs:
             raise TypeError(
                 "Legacy MemoryGuard kwargs cannot be mixed with SecureMemoryStore settings. "
-                "Pass guard=MemoryGuard(...) for legacy behavior or pass analyzer/runtime policy "
-                "settings for the secure adapter path."
+                "Pass guard=MemoryGuard(...) with allow_legacy_guard=True for legacy behavior or "
+                "pass analyzer/runtime policy settings for the secure adapter path."
             )
 
         self.secure_store = secure_store or SecureMemoryStore(
@@ -151,6 +168,12 @@ class UniversalMemoryGuard:
         )
         self._legacy_guard = None
         self.guard = self.secure_store
+
+    @property
+    def is_secure_store_backed(self) -> bool:
+        """Whether this adapter is enforcing through SecureMemoryStore."""
+
+        return self.secure_store is not None
 
     def protect_write(self, content: Any, **context: Any) -> MemoryProtectionResult:
         """Inspect content before it is committed to memory."""

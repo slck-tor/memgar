@@ -13,7 +13,7 @@ from memgar.integrations.universal import (
     secure_memory_writer,
 )
 from memgar.models import AnalysisResult, Decision
-from memgar.secure_memory_store import SecureMemoryStore
+from memgar.secure_memory_store import SecureMemoryBypassError, SecureMemoryStore
 
 
 @dataclass
@@ -58,9 +58,26 @@ class BlockAnalyzer:
         )
 
 
+def legacy_guard():
+    with pytest.warns(RuntimeWarning, match="legacy guard"):
+        return UniversalMemoryGuard(guard=FakeGuard(), allow_legacy_guard=True)
+
+
+def test_legacy_guard_requires_explicit_escape_hatch():
+    with pytest.raises(SecureMemoryBypassError):
+        UniversalMemoryGuard(guard=FakeGuard())
+
+
+def test_legacy_guard_escape_hatch_is_marked_non_secure():
+    guard = legacy_guard()
+
+    assert guard.secure_store is None
+    assert guard.is_secure_store_backed is False
+
+
 def test_wrap_writer_passes_safe_content():
     writes = []
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
 
     def save_memory(content):
         writes.append(content)
@@ -73,7 +90,7 @@ def test_wrap_writer_passes_safe_content():
 
 
 def test_wrap_writer_raises_on_block():
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
     protected = guard.wrap_writer(lambda content: content)
 
     with pytest.raises(MemoryBlockedError) as exc:
@@ -85,7 +102,7 @@ def test_wrap_writer_raises_on_block():
 
 def test_wrap_writer_replaces_sanitized_content():
     writes = []
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
     protected = guard.wrap_writer(lambda content: writes.append(content))
 
     protected("please sanitize this memory")
@@ -95,7 +112,11 @@ def test_wrap_writer_replaces_sanitized_content():
 
 def test_secure_memory_writer_factory():
     writes = []
-    protected = secure_memory_writer(lambda content: writes.append(content), guard=FakeGuard())
+    protected = secure_memory_writer(
+        lambda content: writes.append(content),
+        guard=FakeGuard(),
+        allow_legacy_guard=True,
+    )
 
     protected("normal memory")
 
@@ -103,20 +124,20 @@ def test_secure_memory_writer_factory():
 
 
 def test_guard_agent_memory_factory():
-    guard = guard_agent_memory(guard=FakeGuard())
+    guard = guard_agent_memory(guard=FakeGuard(), allow_legacy_guard=True)
 
     assert isinstance(guard, UniversalMemoryGuard)
 
 
 def test_guard_read_results_drops_blocked_items_by_default():
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
     records = ["safe memory", "block poisoned memory", "another safe memory"]
 
     assert guard.guard_read_results(records) == ["safe memory", "another safe memory"]
 
 
 def test_guard_read_results_sanitizes_dict_content():
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
     records = [{"id": "1", "content": "sanitize this retrieval"}]
 
     assert guard.guard_read_results(records) == [{"id": "1", "content": "clean this retrieval"}]
@@ -124,7 +145,7 @@ def test_guard_read_results_sanitizes_dict_content():
 
 def test_async_writer_supported():
     writes = []
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
 
     async def save_memory(content):
         writes.append(content)
@@ -145,7 +166,7 @@ def test_install_write_guard_patches_object_method():
             self.values.append(content)
 
     memory = Memory()
-    guard = UniversalMemoryGuard(guard=FakeGuard())
+    guard = legacy_guard()
 
     guard.install_write_guard(memory, "add")
     memory.add("sanitize object memory")
@@ -158,6 +179,7 @@ def test_default_adapter_uses_secure_memory_store():
 
     assert isinstance(guard.secure_store, SecureMemoryStore)
     assert guard.guard is guard.secure_store
+    assert guard.is_secure_store_backed is True
 
 
 def test_default_secure_store_redacts_dlp_before_writer():
