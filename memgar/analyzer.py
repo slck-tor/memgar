@@ -1038,6 +1038,7 @@ class Analyzer:
         ensemble_voter: bool = True,
         canary_manager: Any = None,
         similarity_layer: bool = True,
+        multilingual: bool = True,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1054,6 +1055,13 @@ class Analyzer:
             memory_store: Optional MemoryStore for hunter retroactive scanning
             semantic_guard: Enable Layer 1.5 SemanticGuard (embedding similarity)
             context_buffer: Enable stateful context-split detection per session
+            multilingual: Enable Plan C+B multilingual attack detection.
+                When a non-Latin script (Arabic, CJK, Cyrillic-semantic, etc.)
+                is detected, runs paraphrase-multilingual-MiniLM-L12-v2 similarity
+                (Plan C). If the score falls in the uncertain band, automatically
+                escalates to Layer 2 LLM (Plan B). When sentence-transformers is
+                unavailable, non-Latin content is quarantined with
+                "multilingual_unverified" rather than allowed through silently.
         """
         self.use_llm = use_llm
         self.api_key = api_key
@@ -1149,6 +1157,16 @@ class Analyzer:
             try:
                 from memgar.similarity_layer import get_global_layer
                 self._similarity_layer = get_global_layer()
+            except Exception:
+                pass
+
+        # Multilingual detector (Plan C + B): non-Latin script detection +
+        # paraphrase-multilingual-MiniLM-L12-v2 similarity + LLM escalation.
+        self._multilingual_detector: Any = None
+        if multilingual:
+            try:
+                from memgar.multilingual_detector import get_multilingual_detector
+                self._multilingual_detector = get_multilingual_detector()
             except Exception:
                 pass
 
@@ -1825,6 +1843,86 @@ class Analyzer:
             except Exception:
                 pass
 
+        # Multilingual detection — Plan C + B
+        # Runs only when non-Latin script ratio > NON_LATIN_THRESHOLD.
+        # Plan C: paraphrase-multilingual-MiniLM-L12-v2 similarity (offline, ~15-40ms).
+        # Plan B: uncertain score band → escalate to Layer 2 LLM if available.
+        # Offline fallback: detector unavailable → quarantine with flag.
+        if self._multilingual_detector is not None:
+            try:
+                from memgar.multilingual_detector import (
+                    NON_LATIN_THRESHOLD, detect_script_ratio,
+                )
+                from memgar.models import ThreatCategory
+
+                if detect_script_ratio(check_content) >= NON_LATIN_THRESHOLD:
+                    ml_result = self._multilingual_detector.detect(check_content)
+                    layers_used.append("multilingual_detector")
+
+                    if not ml_result.available:
+                        # Offline: sentence-transformers absent → conservative quarantine
+                        quarantine_threat = ThreatMatch(
+                            threat=Threat(
+                                id="ML-LANG-UNVERIFIED",
+                                name="Multilingual Content — Unverified",
+                                description=(
+                                    "Non-Latin script detected but multilingual model "
+                                    "unavailable (install sentence-transformers). "
+                                    "Content quarantined for safety."
+                                ),
+                                category=ThreatCategory.BEHAVIOR,
+                                severity=Severity.MEDIUM,
+                                patterns=[], keywords=[], examples=[],
+                            ),
+                            matched_text=check_content[:120],
+                            match_type="multilingual_unverified",
+                            confidence=0.5,
+                            position=(0, min(len(check_content), 120)),
+                        )
+                        if "ML-LANG-UNVERIFIED" not in {t.threat.id for t in threats}:
+                            threats.append(quarantine_threat)
+
+                    elif ml_result.is_threat:
+                        # Plan C: confirmed multilingual attack
+                        lang = (ml_result.matched_language or "unknown").replace("injection_", "")
+                        ml_threat = ThreatMatch(
+                            threat=Threat(
+                                id="ML-LANG-001",
+                                name="Multilingual Injection Attack",
+                                description=(
+                                    f"Multilingual attack detected (lang: {lang}, "
+                                    f"similarity: {ml_result.score:.2f}). "
+                                    f"Closest: \"{(ml_result.matched_example or '')[:60]}\""
+                                ),
+                                category=ThreatCategory.BEHAVIOR,
+                                severity=Severity.HIGH if ml_result.score >= 0.65 else Severity.MEDIUM,
+                                patterns=[], keywords=[], examples=[],
+                                mitre_attack="T1656",
+                            ),
+                            matched_text=check_content[:120],
+                            match_type="multilingual_similarity",
+                            confidence=round(ml_result.score, 3),
+                            position=(0, min(len(check_content), 120)),
+                        )
+                        if "ML-LANG-001" not in {t.threat.id for t in threats}:
+                            threats.append(ml_threat)
+                        layers_used.append("multilingual_plan_c")
+
+                    elif ml_result.should_escalate and not self.use_llm:
+                        # Plan B: uncertain score → force Layer 2 LLM for this entry
+                        try:
+                            semantic_threats = self._layer2_semantic_analysis(check_content, threats)
+                            if semantic_threats:
+                                existing_ids = {t.threat.id for t in threats}
+                                for st in semantic_threats:
+                                    if st.threat.id not in existing_ids:
+                                        threats.append(st)
+                            layers_used.append("multilingual_plan_b_llm")
+                        except Exception as llm_exc:
+                            logger.debug("Multilingual Plan B LLM escalation failed: %s", llm_exc)
+            except Exception as ml_exc:
+                logger.debug("Multilingual detection error: %s", ml_exc)
+
         # Layer 2-ML: Transformer inference (ONNX, ~5ms — no API call)
         # High confidence (≥threshold) → add ML-DETECT threat and boost risk score.
         # Low confidence → pass through; LLM Layer 2 (if enabled) handles borderline.
@@ -1835,7 +1933,7 @@ class Analyzer:
                 l2ml.set_attribute("memgar.l2ml.latency_ms", ml_latency)
                 if ml_prob >= self._transformer_threshold:
                     layers_used.append("transformer_ml")
-                    from memgar.models import ThreatMatch, ThreatCategory as _TC
+                    from memgar.models import ThreatCategory as _TC
                     ml_threat = Threat(
                         id="ML-DETECT-001",
                         name="ML Transformer Detection",

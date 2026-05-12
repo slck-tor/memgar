@@ -61,6 +61,10 @@ semantic = [
     "sentence-transformers>=2.2.0",
     "numpy>=1.21.0",
 ]
+multilingual = [
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.21.0",
+]
 ml = [
     "transformers>=4.40.0",
     "onnxruntime>=1.17.0",
@@ -123,7 +127,7 @@ gateway = [
     "httpx>=0.25.0",
 ]
 all = [
-    "memgar[dev,semantic,ml,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,tracing,server,graph,gateway]",
+    "memgar[dev,semantic,multilingual,ml,llm,langchain,llamaindex,crewai,autogen,watch,adversarial,feed,observability,tracing,server,graph,gateway]",
 ]
 
 [project.scripts]

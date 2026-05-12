@@ -160,6 +160,14 @@ from memgar.sanitizer import (
     SanitizeResult,
     SanitizeAction,
 )
+from memgar.multilingual_detector import (
+    MultilingualDetector,
+    MultilingualResult,
+    MULTILINGUAL_THREAT_EXAMPLES,
+    detect_script_ratio,
+    NON_LATIN_THRESHOLD,
+    get_multilingual_detector,
+)
 
 # =============================================================================
 # LAYER 2: PROVENANCE (Always available)
