@@ -281,6 +281,79 @@ class TestMCPProxy:
         assert out["error"]["code"] == -32001
         assert out["id"] == 7
 
+    def test_tool_arg_schema_blocks_missing_required_field(self):
+        proxy = MCPProxy(
+            tool_arg_schemas={
+                "http_get": {
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {
+                        "url": {"type": "string", "pattern": r"^https://"},
+                    },
+                    "additionalProperties": False,
+                }
+            }
+        )
+        frame = {
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": {"name": "http_get", "arguments": {"query": "test"}},
+        }
+
+        out = proxy.filter_outgoing_request(frame)
+
+        assert "error" in out
+        assert "schema validation failed" in out["error"]["data"]["reason"]
+        assert out["error"]["data"]["findings"] == ["schema_required_missing"]
+
+    def test_tool_arg_allowlist_blocks_unapproved_value(self):
+        proxy = MCPProxy(
+            tool_arg_allowlists={
+                "send_payment": {
+                    "currency": ["USD", "EUR"],
+                }
+            }
+        )
+        frame = {
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {
+                "name": "send_payment",
+                "arguments": {"currency": "BTC", "amount": 100},
+            },
+        }
+
+        out = proxy.filter_outgoing_request(frame)
+
+        assert "error" in out
+        assert "allowlisted" in out["error"]["data"]["reason"]
+        assert out["error"]["data"]["findings"] == ["allowlist_violation:currency"]
+
+    def test_tool_arg_json_string_is_schema_validated(self):
+        proxy = MCPProxy(
+            tool_arg_schemas={
+                "webhook": {
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {
+                        "url": {"type": "string", "pattern": r"^https://api\.example\.com"},
+                    },
+                    "additionalProperties": False,
+                }
+            }
+        )
+        frame = {
+            "jsonrpc": "2.0", "id": 13, "method": "tools/call",
+            "params": {
+                "name": "webhook",
+                "arguments": json.dumps({"url": "http://evil.example.net/hook"}),
+            },
+        }
+
+        out = proxy.filter_outgoing_request(frame)
+
+        assert "error" in out
+        assert "schema validation failed" in out["error"]["data"]["reason"]
+        assert out["error"]["data"]["findings"] == ["schema_pattern_mismatch"]
+
     def test_canary_in_tool_result_redacted(self):
         canary = self.proxy.analyzer.issue_canary("t", "a", label="z")
         frame = {
