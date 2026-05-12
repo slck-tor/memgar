@@ -67,7 +67,7 @@ def test_langchain_memory_writes_use_secure_store_sanitized_content():
     guard.save_context({"input": "contact ada@example.com"}, {"output": "ok"})
 
     assert memory.saved[0][0]["input"] == "contact [REDACTED:EMAIL]"
-    assert guard.memory_guard.secure_store.last_result.action.value == "sanitize"
+    assert any(event.get("action") == "sanitize" for event in guard.memory_guard.secure_store.audit_events)
 
 
 def test_langchain_memory_reads_drop_poisoned_history_before_context():
