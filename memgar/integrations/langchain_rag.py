@@ -483,32 +483,42 @@ def _document_metadata(doc: Any) -> Dict[str, Any]:
     return dict(getattr(doc, "metadata", {}) or {})
 
 
-def _replace_document_content(doc: Document, safe_content: str) -> Document:
+def _replace_document_content(doc: Document, safe_content: Any) -> Document:
+    safe_text = _coerce_safe_content(safe_content)
     if isinstance(doc, dict):
         updated = dict(doc)
         if "page_content" in updated:
-            updated["page_content"] = safe_content
+            updated["page_content"] = safe_text
         elif "content" in updated:
-            updated["content"] = safe_content
+            updated["content"] = safe_text
         else:
-            updated["page_content"] = safe_content
+            updated["page_content"] = safe_text
         return updated
     if hasattr(doc, "model_copy"):
         try:
-            return doc.model_copy(update={"page_content": safe_content})
+            return doc.model_copy(update={"page_content": safe_text})
         except Exception:
             pass
     if hasattr(doc, "copy"):
         try:
-            return doc.copy(update={"page_content": safe_content})
+            return doc.copy(update={"page_content": safe_text})
         except TypeError:
             pass
         except Exception:
             pass
     try:
         cloned = copy.copy(doc)
-        setattr(cloned, "page_content", safe_content)
+        setattr(cloned, "page_content", safe_text)
         return cloned
     except Exception:
         logger.debug("Memgar: unable to clone LangChain Document for sanitized retrieval")
-    return _make_document(safe_content, _document_metadata(doc))
+    return _make_document(safe_text, _document_metadata(doc))
+
+
+def _coerce_safe_content(safe_content: Any) -> str:
+    if isinstance(safe_content, dict):
+        for key in ("page_content", "content", "text"):
+            value = safe_content.get(key)
+            if isinstance(value, str):
+                return value
+    return str(safe_content)
