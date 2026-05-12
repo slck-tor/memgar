@@ -340,6 +340,9 @@ def create_secure_conversational_chain(
     from .langchain import MemgarMemoryGuard
 
     shared_guard = guard_kwargs.get("memory_guard")
+    memory_guard_kwargs = {
+        key: value for key, value in guard_kwargs.items() if key != "memory_guard"
+    }
     secure_retriever = MemgarRetriever(
         base_retriever=retriever,
         min_trust_score=min_trust_score,
@@ -349,7 +352,7 @@ def create_secure_conversational_chain(
     secure_memory = (
         memory
         if isinstance(memory, MemgarMemoryGuard)
-        else MemgarMemoryGuard(memory, memory_guard=shared_guard, **guard_kwargs)
+        else MemgarMemoryGuard(memory, memory_guard=shared_guard, **memory_guard_kwargs)
     )
     return ConversationalRetrievalChain.from_llm(
         llm=llm,
