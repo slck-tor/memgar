@@ -12,6 +12,7 @@ Memgar's MCP proxy interposes on every JSON-RPC frame and applies:
 
   * Layer 1+2.5 + canary scan on tool inputs (``tools/call`` arguments)
   * ToolUseGuard policy on tool calls (host allowlists, payment drift…)
+  * Tool argument firewall (schema + field allowlist)
   * Output scan on tool results, redacting / blocking on canary leaks or
     secrets before the result reaches the agent's memory
   * Tool *definition* scan when the server lists tools — we refuse to
@@ -27,8 +28,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from memgar import Analyzer, MemoryEntry
 from memgar.tool_use_guard import ToolUseGuard, ToolDecision
@@ -59,6 +61,9 @@ class MCPProxy:
     Args:
         analyzer: Memgar Analyzer instance.
         tool_guard: optional ToolUseGuard for policy on tool calls.
+        allowlist_hosts: outbound hosts allowed for URL arguments.
+        tool_arg_schemas: per-tool JSON-schema-like argument constraints.
+        tool_arg_allowlists: per-tool field allowlists.
         block_canary_leaks: redact/block tool *results* containing canaries.
         block_poisoned_definitions: refuse to surface tools whose
             descriptions look like prompt injections.
@@ -68,13 +73,18 @@ class MCPProxy:
         self,
         analyzer: Optional[Analyzer] = None,
         tool_guard: Optional[ToolUseGuard] = None,
+        allowlist_hosts: Optional[List[str]] = None,
+        tool_arg_schemas: Optional[Dict[str, Dict[str, Any]]] = None,
+        tool_arg_allowlists: Optional[Dict[str, Dict[str, List[Any]]]] = None,
         block_canary_leaks: bool = True,
         block_poisoned_definitions: bool = True,
     ) -> None:
         self.analyzer = analyzer or Analyzer(use_llm=False)
-        self.tool_guard = tool_guard or ToolUseGuard()
+        self.tool_guard = tool_guard or ToolUseGuard(allowlist_hosts=allowlist_hosts)
         self.block_canary_leaks = block_canary_leaks
         self.block_poisoned_definitions = block_poisoned_definitions
+        self.tool_arg_schemas = tool_arg_schemas or {}
+        self.tool_arg_allowlists = tool_arg_allowlists or {}
 
     # -----------------------------------------------------------------
     # Frame handlers
@@ -128,10 +138,23 @@ class MCPProxy:
     # -----------------------------------------------------------------
 
     def _enforce_tool_call(
-        self, tool_name: str, arguments: Dict[str, Any]
+        self, tool_name: str, arguments: Any
     ) -> MCPDecision:
+        parsed_args, parse_error = self._coerce_arguments(arguments)
+        if parse_error:
+            return MCPDecision(
+                allowed=False,
+                risk_score=100,
+                reason=f"invalid tool arguments: {parse_error}",
+                findings=["invalid_json_arguments"],
+            )
+
+        schema_result = self._validate_tool_arguments(tool_name, parsed_args)
+        if schema_result is not None:
+            return schema_result
+
         try:
-            check = self.tool_guard.check_call(tool_name, arguments)
+            check = self.tool_guard.check_call(tool_name, parsed_args)
         except Exception as exc:
             return MCPDecision(allowed=True, risk_score=0, reason=f"guard error: {exc}")
 
@@ -144,7 +167,7 @@ class MCPProxy:
             )
 
         # Also analyze the concatenation of string args for poisoning intent
-        merged = self._collect_strings(arguments)
+        merged = self._collect_strings(parsed_args)
         if merged:
             try:
                 result = self.analyzer.analyze(MemoryEntry(
@@ -159,6 +182,119 @@ class MCPProxy:
             except Exception:
                 pass
         return MCPDecision(allowed=True, risk_score=check.risk_score)
+
+    def _validate_tool_arguments(self, tool_name: str, arguments: Dict[str, Any]) -> Optional[MCPDecision]:
+        schema = self.tool_arg_schemas.get(tool_name)
+        if schema:
+            ok, reason, finding = self._validate_schema(arguments, schema)
+            if not ok:
+                return MCPDecision(
+                    allowed=False,
+                    risk_score=90,
+                    reason=f"schema validation failed for '{tool_name}': {reason}",
+                    findings=[finding],
+                )
+
+        allowlist = self.tool_arg_allowlists.get(tool_name, {})
+        for field, allowed_values in allowlist.items():
+            if field not in arguments:
+                continue
+            value = arguments[field]
+            if value not in allowed_values:
+                return MCPDecision(
+                    allowed=False,
+                    risk_score=95,
+                    reason=f"field '{field}' value is not allowlisted for '{tool_name}'",
+                    findings=[f"allowlist_violation:{field}"],
+                )
+        return None
+
+    def _validate_schema(self, arguments: Dict[str, Any], schema: Dict[str, Any]) -> tuple[bool, str, str]:
+        if schema.get("type") == "object" and not isinstance(arguments, dict):
+            return False, "arguments must be an object", "schema_type_mismatch"
+
+        required = schema.get("required", [])
+        for key in required:
+            if key not in arguments:
+                return False, f"missing required field '{key}'", "schema_required_missing"
+
+        properties = schema.get("properties", {})
+        additional_allowed = schema.get("additionalProperties", True)
+        if not additional_allowed:
+            unknown = [key for key in arguments if key not in properties]
+            if unknown:
+                return False, f"unknown fields not allowed: {', '.join(unknown)}", "schema_unknown_field"
+
+        for field, rules in properties.items():
+            if field not in arguments:
+                continue
+            value = arguments[field]
+            declared_type = rules.get("type")
+            if declared_type and not self._type_matches(value, declared_type):
+                return False, f"field '{field}' expected type '{declared_type}'", "schema_type_mismatch"
+
+            enum_values = rules.get("enum")
+            if enum_values is not None and value not in enum_values:
+                return False, f"field '{field}' must be one of {enum_values}", "schema_enum_violation"
+
+            if isinstance(value, str):
+                min_len = rules.get("minLength")
+                max_len = rules.get("maxLength")
+                if isinstance(min_len, int) and len(value) < min_len:
+                    return False, f"field '{field}' shorter than minLength={min_len}", "schema_min_length"
+                if isinstance(max_len, int) and len(value) > max_len:
+                    return False, f"field '{field}' longer than maxLength={max_len}", "schema_max_length"
+                pattern = rules.get("pattern")
+                if isinstance(pattern, str) and re.search(pattern, value) is None:
+                    return False, f"field '{field}' does not match pattern", "schema_pattern_mismatch"
+
+            if isinstance(value, (int, float)):
+                minimum = rules.get("minimum")
+                maximum = rules.get("maximum")
+                if isinstance(minimum, (int, float)) and value < minimum:
+                    return False, f"field '{field}' below minimum={minimum}", "schema_minimum"
+                if isinstance(maximum, (int, float)) and value > maximum:
+                    return False, f"field '{field}' above maximum={maximum}", "schema_maximum"
+
+            if isinstance(value, list) and isinstance(rules.get("items"), dict):
+                item_type = rules["items"].get("type")
+                if item_type and any(not self._type_matches(item, item_type) for item in value):
+                    return False, f"field '{field}' has invalid item types", "schema_item_type_mismatch"
+
+        return True, "", ""
+
+    @staticmethod
+    def _type_matches(value: Any, declared_type: str) -> bool:
+        mapping = {
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "object": dict,
+            "array": list,
+        }
+        target = mapping.get(declared_type)
+        if target is None:
+            return True
+        if declared_type == "number":
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        if declared_type == "integer":
+            return isinstance(value, int) and not isinstance(value, bool)
+        return isinstance(value, target)
+
+    @staticmethod
+    def _coerce_arguments(arguments: Any) -> tuple[Dict[str, Any], Optional[str]]:
+        if isinstance(arguments, dict):
+            return arguments, None
+        if isinstance(arguments, str):
+            try:
+                parsed = json.loads(arguments)
+            except json.JSONDecodeError as exc:
+                return {}, str(exc)
+            if isinstance(parsed, dict):
+                return parsed, None
+            return {}, "decoded JSON arguments must be an object"
+        return {}, "arguments must be object or JSON object string"
 
     def _filter_tools_list(
         self, frame: Dict[str, Any], result: Dict[str, Any]
@@ -214,6 +350,7 @@ class MCPProxy:
     @staticmethod
     def _collect_strings(value: Any) -> str:
         out: List[str] = []
+
         def walk(v: Any) -> None:
             if isinstance(v, str):
                 out.append(v)
@@ -223,6 +360,7 @@ class MCPProxy:
             elif isinstance(v, (list, tuple, set)):
                 for k in v:
                     walk(k)
+
         walk(value)
         return "\n".join(out)
 
