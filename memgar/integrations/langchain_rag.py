@@ -17,7 +17,7 @@ import copy
 import hashlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ except ImportError:
     VectorStore = object
 
 from ..retriever import RetrievalMetadata, TrustAwareRetriever
+from ..secure_memory_store import SecureMemoryBypassError
 from .universal import UniversalMemoryGuard
 
 
@@ -54,6 +55,9 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
     memory_guard: Any = None
     scan_retrieval_outputs: bool = True
     agent_id: str = "langchain"
+    min_trust_score: float = 0.3
+    max_low_trust_items: int = 0
+    risk_weighted_top_k: bool = True
 
     class Config:
         arbitrary_types_allowed = True
@@ -86,6 +90,9 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
         on_retrieval_threat: str = "drop",
         allow_legacy_guard: bool = False,
         guard: Optional[Any] = None,
+        max_low_trust_items: int = 0,
+        risk_weighted_top_k: bool = True,
+        allow_insecure_memory_guard: bool = False,
         **kwargs: Any,
     ):
         if LANGCHAIN_AVAILABLE:
@@ -96,6 +103,9 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
         self.on_anomaly = on_anomaly
         self.agent_id = agent_id
         self.scan_retrieval_outputs = scan_retrieval_outputs
+        self.min_trust_score = max(0.0, float(min_trust_score))
+        self.max_low_trust_items = max(0, int(max_low_trust_items))
+        self.risk_weighted_top_k = bool(risk_weighted_top_k)
         self.memory_guard = memory_guard or UniversalMemoryGuard(
             guard=guard,
             secure_store=secure_store,
@@ -110,6 +120,15 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
             on_read_threat=on_retrieval_threat,
             default_source_type="langchain_retrieval",
         )
+        if (
+            not allow_insecure_memory_guard
+            and hasattr(self.memory_guard, "is_secure_store_backed")
+            and not bool(getattr(self.memory_guard, "is_secure_store_backed"))
+        ):
+            raise SecureMemoryBypassError(
+                "MemgarRetriever requires a SecureMemoryStore-backed UniversalMemoryGuard. "
+                "Pass a secure guard or set allow_insecure_memory_guard=True for an explicit migration escape hatch."
+            )
 
         self.trust_retriever = TrustAwareRetriever(
             base_retriever=base_retriever,
@@ -208,6 +227,9 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
 
         stats = self.trust_retriever.get_statistics()
         stats["runtime_firewall_enabled"] = self.scan_retrieval_outputs
+        stats["min_trust_score"] = self.min_trust_score
+        stats["max_low_trust_items"] = self.max_low_trust_items
+        stats["risk_weighted_top_k"] = self.risk_weighted_top_k
         return stats
 
     def get_anomaly_report(self) -> List[Dict[str, Any]]:
@@ -233,6 +255,8 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
             "trust_adjusted_score": doc.trust_adjusted_score,
             "final_score": doc.final_score,
             "is_trusted": doc.is_trusted,
+            "trust_score": doc.metadata.trust_score if doc.metadata else 0.0,
+            "risk_score": doc.metadata.risk_score if doc.metadata else 0,
         }
         if self.return_metadata and doc.metadata:
             metadata["memgar"] = doc.metadata.to_dict()
@@ -253,6 +277,9 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
                     "metadata": metadata,
                     "doc_id": metadata.get("doc_id", str(index)),
                     "_memgar_index": index,
+                    "_memgar_trust": self._metadata_trust(metadata),
+                    "_memgar_risk": self._metadata_risk(metadata),
+                    "_memgar_base_score": self._metadata_score(metadata),
                 }
             )
 
@@ -263,13 +290,64 @@ class MemgarRetriever(BaseRetriever if LANGCHAIN_AVAILABLE else object):
             source_type="langchain_retrieval",
             agent_id=self.agent_id,
         )
-        safe_documents: List[Document] = []
+
+        if self.risk_weighted_top_k:
+            safe_records = sorted(
+                safe_records,
+                key=lambda item: self._risk_weighted_score(item),
+                reverse=True,
+            )
+
+        low_trust_kept = 0
+        filtered_records: List[Dict[str, Any]] = []
         for record in safe_records:
+            trust = float(record.get("_memgar_trust", 1.0))
+            if trust < self.min_trust_score:
+                if low_trust_kept >= self.max_low_trust_items:
+                    continue
+                low_trust_kept += 1
+            filtered_records.append(record)
+
+        final_records = filtered_records[: self.trust_retriever.top_k]
+
+        safe_documents: List[Document] = []
+        for record in final_records:
             index = record.get("_memgar_index")
             if index is None or index >= len(documents):
                 continue
             safe_documents.append(_replace_document_content(documents[index], record.get("content", "")))
         return safe_documents
+
+    @staticmethod
+    def _metadata_trust(metadata: Dict[str, Any]) -> float:
+        trust = metadata.get("trust_score")
+        if isinstance(trust, (int, float)):
+            return max(0.0, min(1.0, float(trust)))
+        if metadata.get("is_trusted"):
+            return 1.0
+        return 0.5
+
+    @staticmethod
+    def _metadata_risk(metadata: Dict[str, Any]) -> int:
+        risk = metadata.get("risk_score", 0)
+        if isinstance(risk, (int, float)):
+            return max(0, min(100, int(risk)))
+        return 0
+
+    @staticmethod
+    def _metadata_score(metadata: Dict[str, Any]) -> float:
+        for key in ("final_score", "trust_adjusted_score", "similarity_score", "score"):
+            value = metadata.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+        return 0.0
+
+    @staticmethod
+    def _risk_weighted_score(record: Dict[str, Any]) -> float:
+        trust = float(record.get("_memgar_trust", 0.5))
+        risk = float(record.get("_memgar_risk", 0.0))
+        base = float(record.get("_memgar_base_score", 0.0))
+        return (base * (0.7 + 0.3 * trust)) - (risk / 1000.0)
 
 
 class MemgarVectorStoreRetriever(MemgarRetriever):
