@@ -1082,13 +1082,23 @@ class Analyzer:
         # Optional MemoryStore for hunter retroactive scanning
         self._memory_store: Any = memory_store
 
-        # Layer 1.5: SemanticGuard (optional, requires sentence-transformers)
+        # Layer 1.5: SemanticGuard (optional, requires sentence-transformers).
+        # When the guard ends up in degraded mode (missing centroids file or
+        # sentence-transformers not installed), we drop it from the pipeline
+        # so analyze() doesn't pay for a call that always returns 0.0.
+        # The guard itself emits a one-time WARNING log in that case so the
+        # operator knows Layer 1.5 is disabled.
         self._semantic_guard = None
         self._semantic_guard_threshold = 0.75
         if semantic_guard:
             try:
                 from memgar.semantic_guard import SemanticGuard
-                self._semantic_guard = SemanticGuard()
+                guard = SemanticGuard()
+                if guard.is_fitted:
+                    self._semantic_guard = guard
+                else:
+                    # Keep a reference for health_check() but don't run it.
+                    self._semantic_guard_degraded = guard.health()
             except Exception:
                 pass
 
@@ -2376,7 +2386,7 @@ class Analyzer:
         for threat in self.patterns:
             severity = threat.severity.value
             stats[severity] = stats.get(severity, 0) + 1
-        
+
         return {
             "total_patterns": len(self.patterns),
             "by_severity": stats,
@@ -2384,6 +2394,67 @@ class Analyzer:
                 len(patterns) for patterns in self._compiled_patterns.values()
             ),
         }
+
+    def health_check(self) -> dict[str, Any]:
+        """
+        Return a per-layer readiness snapshot of this Analyzer.
+
+        Each layer reports `status` ("ok" | "degraded" | "disabled") plus a
+        layer-specific detail dict. Useful at startup or via a /health
+        endpoint so operators detect silently-disabled layers (e.g. Layer 1.5
+        without a centroids file).
+        """
+        layers: dict[str, Any] = {}
+
+        # Layer 1 — always on
+        layers["layer1_patterns"] = {
+            "status": "ok",
+            "total_patterns": len(self.patterns),
+            "compiled_regex_count": sum(
+                len(p) for p in self._compiled_patterns.values()
+            ),
+        }
+
+        # Layer 1.5 — SemanticGuard
+        if self._semantic_guard is not None:
+            layers["layer1_5_semantic_guard"] = {
+                "status": "ok",
+                **self._semantic_guard.health(),
+            }
+        else:
+            degraded = getattr(self, "_semantic_guard_degraded", None)
+            if degraded:
+                layers["layer1_5_semantic_guard"] = {
+                    "status": "degraded",
+                    **degraded,
+                }
+            else:
+                layers["layer1_5_semantic_guard"] = {"status": "disabled"}
+
+        # Layer 2 — LLM
+        layers["layer2_llm"] = {
+            "status": "ok" if self.use_llm else "disabled",
+            "use_llm": self.use_llm,
+        }
+
+        # Layer 3 — Trust-aware scoring
+        layers["layer3_trust"] = {
+            "status": "ok" if self._doc_trust_scores else "disabled",
+            "n_registered_sources": len(self._doc_trust_scores),
+        }
+
+        # Layer 4 — Behavioral baselines
+        layers["layer4_behavioral"] = {
+            "status": "ok" if self._baselines else "disabled",
+            "n_agents": len(self._baselines),
+        }
+
+        overall = (
+            "degraded"
+            if any(l.get("status") == "degraded" for l in layers.values())
+            else "ok"
+        )
+        return {"status": overall, "layers": layers}
 
 
 class QuickAnalyzer:
