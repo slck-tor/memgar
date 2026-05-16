@@ -487,3 +487,51 @@ class TestIntegrationWithFittedCentroids:
         for t in texts:
             s = attack_guard.score(t)
             assert 0.0 <= s <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# health() — degraded-state visibility (regression guard against the silent
+# Layer 1.5 failure mode where centroids file is missing and score() returns
+# 0.0 for every input without any operator-visible signal).
+# ---------------------------------------------------------------------------
+
+class TestHealth:
+
+    def test_health_reports_degraded_when_missing_centroids(self):
+        guard = SemanticGuard(
+            centroids_path="/nonexistent/path.pkl",
+            warn_if_unfitted=False,
+        )
+        h = guard.health()
+        assert h["status"] == "degraded"
+        assert h["is_fitted"] is False
+        assert h["n_centroids"] == 0
+        assert h["reason"] is not None
+        assert h["fix_hint"] is not None
+
+    def test_health_reports_ok_when_fitted(self):
+        guard = _make_fitted_guard()
+        h = guard.health()
+        assert h["status"] == "ok"
+        assert h["is_fitted"] is True
+        assert h["n_centroids"] > 0
+        assert h["reason"] is None
+
+    def test_health_includes_centroids_path(self):
+        guard = SemanticGuard(
+            centroids_path="/nonexistent/path.pkl",
+            warn_if_unfitted=False,
+        )
+        h = guard.health()
+        assert h["centroids_path"] == "/nonexistent/path.pkl"
+
+    def test_warn_suppression_flag(self, caplog):
+        # warn_if_unfitted=False must NOT emit a WARNING log
+        import logging
+        caplog.set_level(logging.WARNING, logger="memgar.semantic_guard")
+        SemanticGuard(
+            centroids_path="/nonexistent/another.pkl",
+            warn_if_unfitted=False,
+        )
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert all("DEGRADED" not in r.getMessage() for r in warnings)

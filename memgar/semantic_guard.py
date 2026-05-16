@@ -126,6 +126,38 @@ def _sigmoid_calibrate(similarity: float) -> float:
     return 1.0 / (1.0 + math.exp(-_SIGMOID_SCALE * (similarity - _SIGMOID_SHIFT)))
 
 
+# Track which (reason, path) pairs we've already warned about so log volume
+# doesn't explode when the same Analyzer is constructed many times.
+_WARNED_UNFITTED: set[tuple[str, str]] = set()
+
+
+def _warn_unfitted_once(reason: str, path: str) -> None:
+    key = (reason, path)
+    if key in _WARNED_UNFITTED:
+        return
+    _WARNED_UNFITTED.add(key)
+    if reason.startswith("sentence_transformers_missing"):
+        logger.warning(
+            "SemanticGuard running in DEGRADED mode: sentence-transformers "
+            "is not installed. Layer 1.5 (zero-shot semantic detection) will "
+            "score every input as 0.0. Install with: "
+            "pip install sentence-transformers"
+        )
+    elif reason.startswith("centroids_file_missing"):
+        logger.warning(
+            "SemanticGuard running in DEGRADED mode: centroids file not "
+            "found at %s. Layer 1.5 will score every input as 0.0. Build "
+            "centroids with: python scripts/compute_semantic_centroids.py",
+            path,
+        )
+    else:
+        logger.warning(
+            "SemanticGuard running in DEGRADED mode: %s. Layer 1.5 will "
+            "score every input as 0.0.",
+            reason,
+        )
+
+
 # ---------------------------------------------------------------------------
 # SemanticGuard
 # ---------------------------------------------------------------------------
@@ -142,6 +174,7 @@ class SemanticGuard:
         model_name: str = EMBEDDING_MODEL,
         centroids_path: Optional[str] = None,
         cache_embeddings: bool = True,
+        warn_if_unfitted: bool = True,
     ):
         """
         Initialize SemanticGuard.
@@ -151,6 +184,10 @@ class SemanticGuard:
             centroids_path: Path to pre-computed centroids pickle.
                             If None, tries the default artifact path.
             cache_embeddings: Whether to cache embeddings to avoid re-encoding.
+            warn_if_unfitted: Emit a one-time warning when the guard ends up
+                in degraded mode (no centroids file or sentence-transformers
+                missing). Set to False in tests that explicitly exercise the
+                unfitted path.
         """
         self.model_name = model_name
         self.cache_embeddings = cache_embeddings
@@ -161,6 +198,9 @@ class SemanticGuard:
         self._centroid_labels: List[str] = []         # optional cluster names
         self._is_fitted: bool = False
         self._embedding_cache: Dict[str, np.ndarray] = {}
+        # Reason the guard is degraded (None when healthy). Surfaced via health().
+        self._degraded_reason: Optional[str] = None
+        self._centroids_path: Optional[str] = None
 
         # Stats
         self._stats = {
@@ -172,12 +212,24 @@ class SemanticGuard:
 
         # Try loading centroids automatically
         path = centroids_path or str(_DEFAULT_CENTROIDS_PATH)
+        self._centroids_path = path
         if Path(path).exists():
             try:
                 self._load_centroids(path)
                 logger.info("SemanticGuard: loaded centroids from %s", path)
             except Exception as e:
+                self._degraded_reason = f"centroid_load_failed: {e}"
                 logger.warning("SemanticGuard: could not load centroids (%s)", e)
+        elif not SENTENCE_TRANSFORMERS_AVAILABLE:
+            self._degraded_reason = "sentence_transformers_missing"
+        else:
+            self._degraded_reason = f"centroids_file_missing: {path}"
+
+        # One-time, prominent warning so degraded mode is never silent in
+        # production. Layer 1.5 returning 0.0 for every input is a real risk
+        # and the previous behaviour swallowed it with a debug log.
+        if warn_if_unfitted and self._degraded_reason and not self._is_fitted:
+            _warn_unfitted_once(self._degraded_reason, path)
 
     # -------------------------------------------------------------------------
     # Model loading
@@ -457,6 +509,42 @@ class SemanticGuard:
     @property
     def n_centroids(self) -> int:
         return len(self._centroids) if self._centroids is not None else 0
+
+    def health(self) -> dict:
+        """
+        Return a machine-readable health snapshot of this guard.
+
+        Keys:
+            status: "ok" | "degraded"
+            reason: str | None — why the guard is degraded (if any)
+            is_fitted: bool
+            n_centroids: int
+            centroids_path: str | None
+            sentence_transformers_available: bool
+            fix_hint: str | None — actionable remediation hint
+        """
+        status = "ok" if self._is_fitted else "degraded"
+        # Defensive getattr so guards constructed via SemanticGuard.__new__()
+        # in tests / custom fitting paths don't blow up.
+        reason = getattr(self, "_degraded_reason", None)
+        centroids_path = getattr(self, "_centroids_path", None)
+        fix_hint: Optional[str] = None
+        if reason:
+            if reason.startswith("sentence_transformers_missing"):
+                fix_hint = "pip install sentence-transformers"
+            elif reason.startswith("centroids_file_missing"):
+                fix_hint = "python scripts/compute_semantic_centroids.py"
+            else:
+                fix_hint = "see logs for details"
+        return {
+            "status": status,
+            "reason": reason,
+            "is_fitted": self._is_fitted,
+            "n_centroids": self.n_centroids,
+            "centroids_path": centroids_path,
+            "sentence_transformers_available": SENTENCE_TRANSFORMERS_AVAILABLE,
+            "fix_hint": fix_hint,
+        }
 
     def clear_cache(self) -> None:
         """Clear the embedding cache to free memory."""
