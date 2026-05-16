@@ -5,7 +5,7 @@ every public dataset whose samples were imported into
 `ml/data/external_corpus_*.json`. Do not edit by hand — re-run the import
 script to refresh.
 
-Last generated: 2026-05-16 21:46:19 UTC
+Last generated: 2026-05-16 22:38:22 UTC
 
 ## AdvBench (harmful behaviors)  (`advbench`)
 
@@ -34,6 +34,20 @@ Last generated: 2026-05-16 21:46:19 UTC
 - **License:** [MIT](https://github.com/centerforaisafety/HarmBench/blob/main/LICENSE)
 - **Citation:** Mazeika et al., 'HarmBench: A Standardized Evaluation Framework for Automated Red Teaming', ICML 2024
 - **Notes:** Filtered to cybercrime_intrusion + misinformation_disinformation only (other categories are content-moderation scope).
+
+## Lakera Gandalf (ignore-instructions prompts)  (`gandalf`)
+
+- **Source URL:** Lakera/gandalf_ignore_instructions
+- **License:** [MIT](https://huggingface.co/datasets/Lakera/gandalf_ignore_instructions)
+- **Citation:** Lakera AI, 'Gandalf Ignore Instructions' dataset (collected from the Gandalf prompt-injection game), HuggingFace
+- **Notes:** 1000 real prompt-injection attempts from the Gandalf game. All label=1; mapped to prompt_injection.
+
+## deepset/prompt-injections  (`deepset_pi`)
+
+- **Source URL:** deepset/prompt-injections
+- **License:** [Apache-2.0](https://huggingface.co/datasets/deepset/prompt-injections)
+- **Citation:** deepset GmbH, 'prompt-injections' dataset, HuggingFace
+- **Notes:** 662 text+label rows (label=1 → prompt injection, label=0 → benign). Used for both attack patterns and FP calibration.
 
 ## Memgar usage
 
