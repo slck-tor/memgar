@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,23 @@ _FEED_ASSET_NAME = "memgar-feed.json.gz"
 _RAW_FALLBACK_URL = "https://raw.githubusercontent.com/{repo}/main/feeds/memgar-feed.json.gz"
 _TIMEOUT = 30
 
+# Suppress duplicate WARNINGs when load()/sync() is retried in a loop.
+_WARNED_FEED: set[tuple[str, str]] = set()
+
+
+def _warn_feed_once(repo: str, reason: str) -> None:
+    key = (repo, reason)
+    if key in _WARNED_FEED:
+        return
+    _WARNED_FEED.add(key)
+    logger.warning(
+        "FeedLoader DEGRADED for %s: %s. Patterns will fall back to the "
+        "bundled PATTERNS list — threat coverage may be stale. Check network "
+        "policy or run: memgar feed sync",
+        repo,
+        reason,
+    )
+
 
 class FeedLoader:
     """Download and cache the signed threat-intelligence feed bundle."""
@@ -40,45 +58,132 @@ class FeedLoader:
         self._max_age = max_age_days
         self._cache = FeedCache(cache_dir=cache_dir)
         self._verifier = FeedVerifier()
+        # Last attempt bookkeeping — surfaced via health().
+        self._last_attempt_at: Optional[float] = None
+        self._last_outcome: str = "never_attempted"  # success | failure | cache_hit
+        self._last_error: Optional[str] = None
+        self._last_bundle_version: Optional[str] = None
+        self._last_pattern_count: int = 0
+        self._used_fallback_url: bool = False
 
     def load(self, auto_sync: bool = True) -> Optional[PatternBundle]:
         """Return a valid bundle, syncing from GitHub if cache is stale."""
+        self._last_attempt_at = time.time()
         cached = self._cache.get_cached_bundle(max_age_days=self._max_age)
         if cached is not None:
+            self._last_outcome = "cache_hit"
+            self._last_error = None
+            self._last_bundle_version = cached.manifest.feed_version
+            self._last_pattern_count = len(cached.patterns)
             return cached
         if auto_sync:
             try:
-                return self.sync()
+                bundle = self.sync()
+                if bundle is None:
+                    # sync() returned None — treat as a soft failure so health()
+                    # reports it rather than claiming success.
+                    if self._last_outcome != "success":
+                        self._last_outcome = "failure"
+                        self._last_error = self._last_error or "sync_returned_none"
+                        _warn_feed_once(self._repo, self._last_error)
+                return bundle
             except Exception as exc:
-                logger.warning("Feed sync failed: %s", exc)
+                self._last_outcome = "failure"
+                self._last_error = f"{type(exc).__name__}: {exc}"
+                _warn_feed_once(self._repo, self._last_error)
+        else:
+            self._last_outcome = "no_cache_no_sync"
+            self._last_error = "cache stale and auto_sync disabled"
         return None
 
     def sync(self) -> Optional[PatternBundle]:
         """Fetch the latest release, verify signature, cache, and return bundle."""
+        self._last_attempt_at = time.time()
         release = self._fetch_release_info()  # None when no release or network failure
 
         download_url = self._find_asset_url(release) if release else None
+        self._used_fallback_url = False
         if not download_url:
             # No release asset — fall back to the committed dist/ file.
             fallback = _RAW_FALLBACK_URL.format(repo=self._repo)
             logger.info("No release asset found, trying fallback URL: %s", fallback)
             download_url = fallback
+            self._used_fallback_url = True
 
         raw_bytes = self._download(download_url)
         bundle = self._parse(raw_bytes)
         if bundle is None:
+            self._last_outcome = "failure"
+            self._last_error = "parse_failed"
             return None
 
         if self._verify:
             if not self._verifier.verify_manifest(bundle.manifest, bundle.bundle_bytes()):
+                self._last_outcome = "failure"
+                self._last_error = "signature_verification_failed"
                 raise FeedSignatureError(
                     f"Feed bundle signature verification failed (version {bundle.manifest.feed_version}). "
                     "The feed may have been tampered with."
                 )
 
         self._cache.save_bundle(bundle)
+        self._last_outcome = "success"
+        self._last_error = None
+        self._last_bundle_version = bundle.manifest.feed_version
+        self._last_pattern_count = len(bundle.patterns)
         logger.info("Feed synced: version %s, %d patterns", bundle.manifest.feed_version, len(bundle.patterns))
         return bundle
+
+    def health(self) -> Dict[str, Any]:
+        """
+        Return a structured snapshot of the feed loader state.
+
+        ``status`` is one of:
+            - ``"ok"``       — last load returned a fresh bundle (sync success or cache hit)
+            - ``"degraded"`` — last load failed; falling back to bundled PATTERNS
+            - ``"unknown"``  — load() / sync() has not been called yet
+        """
+        if self._last_outcome == "never_attempted":
+            status = "unknown"
+        elif self._last_outcome in ("success", "cache_hit"):
+            status = "ok"
+        else:
+            status = "degraded"
+
+        # Inspect cache regardless of staleness so the health snapshot can
+        # show "we have a stale bundle to fall back on" vs "nothing at all".
+        cached_meta = None
+        try:
+            cached = self._cache.get_cached_bundle(max_age_days=10 ** 9)
+            if cached is not None:
+                cached_meta = {
+                    "version": cached.manifest.feed_version,
+                    "n_patterns": len(cached.patterns),
+                    "is_stale": self._cache.is_stale(self._max_age),
+                }
+        except Exception:
+            cached_meta = None
+
+        fix_hint: Optional[str] = None
+        if status == "degraded":
+            fix_hint = "Check outbound HTTPS access to github.com / *.githubusercontent.com or run: memgar feed sync"
+        elif status == "unknown":
+            fix_hint = "Call FeedLoader.load() at startup to populate health state"
+
+        return {
+            "status": status,
+            "repo": self._repo,
+            "last_outcome": self._last_outcome,
+            "last_error": self._last_error,
+            "last_attempt_at": self._last_attempt_at,
+            "last_bundle_version": self._last_bundle_version,
+            "last_pattern_count": self._last_pattern_count,
+            "used_fallback_url": self._used_fallback_url,
+            "verify_signature": self._verify,
+            "max_age_days": self._max_age,
+            "cached_bundle": cached_meta,
+            "fix_hint": fix_hint,
+        }
 
     def _fetch_release_info(self) -> Optional[Dict[str, Any]]:
         url = _GITHUB_API.format(repo=self._repo)

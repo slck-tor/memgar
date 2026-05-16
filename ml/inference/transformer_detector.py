@@ -30,6 +30,49 @@ PYTORCH_DIR     = ONNX_MODEL_DIR / "pytorch"
 MAX_LENGTH      = 128
 
 
+# Track (reason, path) pairs we've already warned about, so repeatedly
+# constructing the detector — e.g. in tests or in a per-request factory —
+# does not produce a wall of identical WARNING logs.
+_WARNED_UNREADY: set[tuple[str, str]] = set()
+
+
+def _warn_unready_once(reason: str, path: str) -> None:
+    key = (reason, path)
+    if key in _WARNED_UNREADY:
+        return
+    _WARNED_UNREADY.add(key)
+    if reason.startswith("model_missing"):
+        logger.warning(
+            "TransformerDetector DISABLED: no ONNX model at %s. Layer 2-ML "
+            "(~5ms fine-tuned transformer) will return 0.0 for every input. "
+            "Train + export with: python ml/training/export_onnx.py",
+            path,
+        )
+    elif reason.startswith("tokenizer_dir_missing"):
+        logger.warning(
+            "TransformerDetector DISABLED: tokenizer directory missing. "
+            "Reason: %s. Layer 2-ML will return 0.0.",
+            reason,
+        )
+    elif reason == "tokenizer_load_failed":
+        logger.warning(
+            "TransformerDetector DISABLED: tokenizer files present but "
+            "could not be loaded (check the `transformers` package). "
+            "Layer 2-ML will return 0.0."
+        )
+    elif reason == "backend_init_failed":
+        logger.warning(
+            "TransformerDetector DISABLED: tokenizer loaded but neither "
+            "ONNX nor PyTorch backend could be initialised. Layer 2-ML "
+            "will return 0.0."
+        )
+    else:
+        logger.warning(
+            "TransformerDetector DISABLED: %s. Layer 2-ML will return 0.0.",
+            reason,
+        )
+
+
 class TransformerDetector:
     """
     Production inference wrapper — ONNX-first with graceful fallbacks.
@@ -47,6 +90,7 @@ class TransformerDetector:
         tokenizer_dir: Optional[str] = None,
         max_length:    int = MAX_LENGTH,
         threshold:     float = 0.5,
+        warn_if_unready: bool = True,
     ) -> None:
         self._max_length  = max_length
         self.threshold    = threshold
@@ -54,9 +98,15 @@ class TransformerDetector:
         self._torch_model = None
         self._tokenizer   = None
         self._backend: str = "none"
+        # Reason the detector ended up disabled, populated below. Surfaced
+        # via health() so operators can detect a silently-disabled ML layer
+        # without having to grep the boot logs.
+        self._degraded_reason: Optional[str] = None
+        self._onnx_path = str(Path(onnx_path or ONNX_MODEL_PATH))
+        self._tokenizer_dir = str(Path(tokenizer_dir or TOKENIZER_DIR))
 
-        onnx_p = Path(onnx_path or ONNX_MODEL_PATH)
-        tok_d  = Path(tokenizer_dir or TOKENIZER_DIR)
+        onnx_p = Path(self._onnx_path)
+        tok_d  = Path(self._tokenizer_dir)
 
         self._init_tokenizer(tok_d)
         if self._tokenizer and onnx_p.exists():
@@ -64,7 +114,25 @@ class TransformerDetector:
         elif self._tokenizer and PYTORCH_DIR.exists():
             self._init_torch()
         else:
-            logger.warning("TransformerDetector: no model found at %s — detector disabled", onnx_p)
+            # Distinguish the three failure modes so health() can offer a
+            # specific fix hint rather than a generic "model missing".
+            if self._tokenizer is None and not tok_d.exists():
+                self._degraded_reason = f"tokenizer_dir_missing: {tok_d}"
+            elif self._tokenizer is None:
+                self._degraded_reason = "tokenizer_load_failed"
+            else:
+                self._degraded_reason = f"model_missing: {onnx_p}"
+            if warn_if_unready:
+                _warn_unready_once(self._degraded_reason, self._onnx_path)
+            return
+
+        # If we attempted ONNX/torch init above but it failed, the relevant
+        # _init_* method already logged a warning; capture the resulting
+        # state so the health snapshot is accurate.
+        if self._backend == "none":
+            self._degraded_reason = "backend_init_failed"
+            if warn_if_unready:
+                _warn_unready_once(self._degraded_reason, self._onnx_path)
 
     # ------------------------------------------------------------------ init
 
@@ -113,6 +181,39 @@ class TransformerDetector:
     @property
     def is_ready(self) -> bool:
         return self._backend in ("onnx", "torch") and self._tokenizer is not None
+
+    def health(self) -> dict:
+        """
+        Return a structured readiness snapshot.
+
+        Mirrors ``SemanticGuard.health()`` so the Analyzer's per-layer health
+        check has a uniform shape across optional ML subsystems. ``status``
+        is one of ``"ok"`` / ``"degraded"``.
+        """
+        ready = self.is_ready
+        status = "ok" if ready else "degraded"
+        reason = getattr(self, "_degraded_reason", None) if not ready else None
+        fix_hint: Optional[str] = None
+        if reason:
+            if reason.startswith("model_missing"):
+                fix_hint = "Train and export an ONNX model into ml/artifacts/transformer_model/"
+            elif reason.startswith("tokenizer_dir_missing"):
+                fix_hint = "Place tokenizer files in ml/artifacts/transformer_model/tokenizer/"
+            elif reason == "tokenizer_load_failed":
+                fix_hint = "pip install transformers"
+            elif reason == "backend_init_failed":
+                fix_hint = "pip install onnxruntime (or transformers + torch)"
+            else:
+                fix_hint = "see logs for details"
+        return {
+            "status": status,
+            "reason": reason,
+            "is_ready": ready,
+            "backend": self._backend,
+            "onnx_path": getattr(self, "_onnx_path", None),
+            "tokenizer_dir": getattr(self, "_tokenizer_dir", None),
+            "fix_hint": fix_hint,
+        }
 
     def predict(self, text: str) -> Tuple[float, float]:
         """

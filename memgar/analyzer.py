@@ -36,6 +36,14 @@ from memgar.models import (
 # and prefer the pickle cache when available
 from memgar.patterns import get_patterns_by_severity  # small helpers only
 
+
+# Most recent FeedLoader.health() snapshot from _load_patterns_fast(). Read by
+# Analyzer.health_check() to surface degraded feed state without rewiring the
+# loader instance through every caller. ``None`` means the loader has not run
+# yet (e.g. Analyzer not constructed).
+_LAST_FEED_HEALTH: dict | None = None
+
+
 def _load_patterns_fast() -> list:
     """Load patterns from pickle cache (3ms) or full import (3500ms), then merge feed patterns."""
     import os, pickle, hashlib
@@ -84,7 +92,11 @@ def _load_patterns_fast() -> list:
         from memgar.patterns import PATTERNS
         patterns = list(PATTERNS)
 
-    # Merge feed patterns (non-fatal: any feed error silently skips)
+    # Merge feed patterns (non-fatal: any feed error silently skips). The
+    # loader's health snapshot is stashed in a module-level dict so
+    # Analyzer.health_check() can surface feed degradation without us having
+    # to thread the loader instance through every caller.
+    global _LAST_FEED_HEALTH
     try:
         from memgar.config import get_config
         cfg = get_config()
@@ -97,13 +109,23 @@ def _load_patterns_fast() -> list:
                 max_age_days=getattr(feed_cfg, "max_age_days", 7),
             )
             bundle = loader.load(auto_sync=getattr(feed_cfg, "auto_sync", True))
+            try:
+                _LAST_FEED_HEALTH = loader.health()
+            except Exception:
+                pass
             if bundle:
                 existing_ids = {t.id for t in patterns}
                 for threat in bundle.to_threat_objects():
                     if threat.id not in existing_ids:
                         patterns.append(threat)
-    except Exception:
-        pass
+        else:
+            _LAST_FEED_HEALTH = {"status": "disabled", "reason": "feed.enabled=False"}
+    except Exception as exc:
+        _LAST_FEED_HEALTH = {
+            "status": "degraded",
+            "reason": f"feed_init_failed: {exc}",
+            "fix_hint": "see logs for details",
+        }
 
     return patterns
 
@@ -1111,8 +1133,12 @@ class Analyzer:
         # Brand Bias Detector (Layer 4 extension for e-commerce / recommendation agents)
         self._brand_bias_detector: Any = brand_bias_detector
 
-        # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for high-confidence cases)
+        # Layer 2-ML: fine-tuned transformer (ONNX, ~5ms, replaces LLM for
+        # high-confidence cases). Mirror the SemanticGuard pattern: keep a
+        # health snapshot when the detector is unavailable so health_check()
+        # can flag it instead of pretending the layer is silently disabled.
         self._transformer: Any = None
+        self._transformer_degraded: dict[str, Any] | None = None
         self._transformer_threshold: float = float(
             os.environ.get("MEMGAR_TRANSFORMER_THRESHOLD", "0.92")
         )
@@ -1123,8 +1149,14 @@ class Analyzer:
                 if det.is_ready:
                     self._transformer = det
                     logger.info("Analyzer: transformer backend ready (%s)", det._backend)
-            except Exception:
-                pass
+                else:
+                    self._transformer_degraded = det.health()
+            except Exception as exc:
+                self._transformer_degraded = {
+                    "status": "degraded",
+                    "reason": f"import_failed: {exc}",
+                    "fix_hint": "pip install onnxruntime transformers",
+                }
 
         # Layer 5: Steganography detector (Unicode covert channels)
         self._stego_detector: Any = None
@@ -2437,6 +2469,27 @@ class Analyzer:
             "use_llm": self.use_llm,
         }
 
+        # Layer 2-ML — fine-tuned transformer (ONNX)
+        if self._transformer is not None:
+            try:
+                layers["layer2_ml_transformer"] = {
+                    "status": "ok",
+                    **self._transformer.health(),
+                }
+            except Exception as exc:
+                layers["layer2_ml_transformer"] = {
+                    "status": "ok",
+                    "backend": getattr(self._transformer, "_backend", "unknown"),
+                    "health_error": str(exc),
+                }
+        elif self._transformer_degraded is not None:
+            layers["layer2_ml_transformer"] = {
+                "status": "degraded",
+                **self._transformer_degraded,
+            }
+        else:
+            layers["layer2_ml_transformer"] = {"status": "disabled"}
+
         # Layer 3 — Trust-aware scoring
         layers["layer3_trust"] = {
             "status": "ok" if self._doc_trust_scores else "disabled",
@@ -2448,6 +2501,17 @@ class Analyzer:
             "status": "ok" if self._baselines else "disabled",
             "n_agents": len(self._baselines),
         }
+
+        # Threat-intelligence feed (not strictly a layer, but a major coverage
+        # input; degraded feed silently falls back to bundled PATTERNS).
+        feed_snapshot = _LAST_FEED_HEALTH
+        if feed_snapshot is None:
+            layers["threat_feed"] = {
+                "status": "unknown",
+                "reason": "feed loader has not run in this process yet",
+            }
+        else:
+            layers["threat_feed"] = feed_snapshot
 
         overall = (
             "degraded"

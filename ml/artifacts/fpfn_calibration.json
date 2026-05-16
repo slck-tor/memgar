@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "generated_at": "2026-05-16T16:38:26Z",
+  "generated_at": "2026-05-16T18:02:02Z",
   "corpus_path": "/home/user/memgar/ml/data/calibration_corpus.json",
   "n_samples": 95,
   "n_attack": 40,
@@ -27,6 +27,15 @@
         "status": "disabled",
         "use_llm": false
       },
+      "layer2_ml_transformer": {
+        "status": "degraded",
+        "reason": "tokenizer_dir_missing: /home/user/memgar/ml/artifacts/transformer_model/tokenizer",
+        "is_ready": false,
+        "backend": "none",
+        "onnx_path": "/home/user/memgar/ml/artifacts/transformer_model/model.onnx",
+        "tokenizer_dir": "/home/user/memgar/ml/artifacts/transformer_model/tokenizer",
+        "fix_hint": "Place tokenizer files in ml/artifacts/transformer_model/tokenizer/"
+      },
       "layer3_trust": {
         "status": "disabled",
         "n_registered_sources": 0
@@ -34,6 +43,20 @@
       "layer4_behavioral": {
         "status": "disabled",
         "n_agents": 0
+      },
+      "threat_feed": {
+        "status": "degraded",
+        "repo": "slcxtor/memgar",
+        "last_outcome": "failure",
+        "last_error": "HTTPError: HTTP Error 404: Not Found",
+        "last_attempt_at": 1778954510.8781307,
+        "last_bundle_version": null,
+        "last_pattern_count": 0,
+        "used_fallback_url": true,
+        "verify_signature": true,
+        "max_age_days": 7,
+        "cached_bundle": null,
+        "fix_hint": "Check outbound HTTPS access to github.com / *.githubusercontent.com or run: memgar feed sync"
       }
     }
   },
@@ -76,7 +99,103 @@
       "fn": 0
     },
     {
+      "threshold": 2,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 4,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 6,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 8,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
       "threshold": 10,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 12,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 14,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 16,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 18,
       "precision": 0.7778,
       "recall": 0.7,
       "f1": 0.7368,
@@ -100,7 +219,103 @@
       "fn": 12
     },
     {
+      "threshold": 22,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 24,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 26,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 28,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
       "threshold": 30,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 32,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 34,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 36,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 38,
       "precision": 0.7778,
       "recall": 0.7,
       "f1": 0.7368,
@@ -124,7 +339,103 @@
       "fn": 12
     },
     {
+      "threshold": 42,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 44,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 46,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 48,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
       "threshold": 50,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 52,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 54,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 56,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 58,
       "precision": 0.7778,
       "recall": 0.7,
       "f1": 0.7368,
@@ -148,6 +459,54 @@
       "fn": 12
     },
     {
+      "threshold": 62,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 64,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 66,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
+      "threshold": 68,
+      "precision": 0.7778,
+      "recall": 0.7,
+      "f1": 0.7368,
+      "fpr": 0.1455,
+      "accuracy": 0.7895,
+      "tp": 28,
+      "fp": 8,
+      "tn": 47,
+      "fn": 12
+    },
+    {
       "threshold": 70,
       "precision": 0.8,
       "recall": 0.7,
@@ -158,6 +517,54 @@
       "fp": 7,
       "tn": 48,
       "fn": 12
+    },
+    {
+      "threshold": 72,
+      "precision": 0.8,
+      "recall": 0.7,
+      "f1": 0.7467,
+      "fpr": 0.1273,
+      "accuracy": 0.8,
+      "tp": 28,
+      "fp": 7,
+      "tn": 48,
+      "fn": 12
+    },
+    {
+      "threshold": 74,
+      "precision": 0.8,
+      "recall": 0.7,
+      "f1": 0.7467,
+      "fpr": 0.1273,
+      "accuracy": 0.8,
+      "tp": 28,
+      "fp": 7,
+      "tn": 48,
+      "fn": 12
+    },
+    {
+      "threshold": 76,
+      "precision": 0.8,
+      "recall": 0.7,
+      "f1": 0.7467,
+      "fpr": 0.1273,
+      "accuracy": 0.8,
+      "tp": 28,
+      "fp": 7,
+      "tn": 48,
+      "fn": 12
+    },
+    {
+      "threshold": 78,
+      "precision": 0.8438,
+      "recall": 0.675,
+      "f1": 0.75,
+      "fpr": 0.0909,
+      "accuracy": 0.8105,
+      "tp": 27,
+      "fp": 5,
+      "tn": 50,
+      "fn": 13
     },
     {
       "threshold": 80,
@@ -172,6 +579,54 @@
       "fn": 14
     },
     {
+      "threshold": 82,
+      "precision": 0.8387,
+      "recall": 0.65,
+      "f1": 0.7324,
+      "fpr": 0.0909,
+      "accuracy": 0.8,
+      "tp": 26,
+      "fp": 5,
+      "tn": 50,
+      "fn": 14
+    },
+    {
+      "threshold": 84,
+      "precision": 0.8387,
+      "recall": 0.65,
+      "f1": 0.7324,
+      "fpr": 0.0909,
+      "accuracy": 0.8,
+      "tp": 26,
+      "fp": 5,
+      "tn": 50,
+      "fn": 14
+    },
+    {
+      "threshold": 86,
+      "precision": 0.8333,
+      "recall": 0.625,
+      "f1": 0.7143,
+      "fpr": 0.0909,
+      "accuracy": 0.7895,
+      "tp": 25,
+      "fp": 5,
+      "tn": 50,
+      "fn": 15
+    },
+    {
+      "threshold": 88,
+      "precision": 0.8333,
+      "recall": 0.625,
+      "f1": 0.7143,
+      "fpr": 0.0909,
+      "accuracy": 0.7895,
+      "tp": 25,
+      "fp": 5,
+      "tn": 50,
+      "fn": 15
+    },
+    {
       "threshold": 90,
       "precision": 0.8214,
       "recall": 0.575,
@@ -182,6 +637,54 @@
       "fp": 5,
       "tn": 50,
       "fn": 17
+    },
+    {
+      "threshold": 92,
+      "precision": 0.8214,
+      "recall": 0.575,
+      "f1": 0.6765,
+      "fpr": 0.0909,
+      "accuracy": 0.7684,
+      "tp": 23,
+      "fp": 5,
+      "tn": 50,
+      "fn": 17
+    },
+    {
+      "threshold": 94,
+      "precision": 0.913,
+      "recall": 0.525,
+      "f1": 0.6667,
+      "fpr": 0.0364,
+      "accuracy": 0.7789,
+      "tp": 21,
+      "fp": 2,
+      "tn": 53,
+      "fn": 19
+    },
+    {
+      "threshold": 96,
+      "precision": 0.9091,
+      "recall": 0.5,
+      "f1": 0.6452,
+      "fpr": 0.0364,
+      "accuracy": 0.7684,
+      "tp": 20,
+      "fp": 2,
+      "tn": 53,
+      "fn": 20
+    },
+    {
+      "threshold": 98,
+      "precision": 0.9091,
+      "recall": 0.5,
+      "f1": 0.6452,
+      "fpr": 0.0364,
+      "accuracy": 0.7684,
+      "tp": 20,
+      "fp": 2,
+      "tn": 53,
+      "fn": 20
     },
     {
       "threshold": 100,
@@ -344,7 +847,7 @@
     "precision": null
   },
   "latency_ms": {
-    "p50": 26.63,
-    "p95": 40.66
+    "p50": 38.84,
+    "p95": 59.17
   }
 }
