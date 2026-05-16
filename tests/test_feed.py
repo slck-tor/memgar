@@ -337,6 +337,62 @@ class TestFeedLoader:
         with pytest.raises(FeedSignatureError):
             loader.sync()
 
+    def test_health_unknown_before_load(self, tmp_path):
+        from memgar.feed.loader import FeedLoader
+
+        loader = FeedLoader(cache_dir=str(tmp_path), verify_signature=False)
+        h = loader.health()
+        assert h["status"] == "unknown"
+        assert h["last_outcome"] == "never_attempted"
+        assert h["fix_hint"] is not None
+
+    def test_health_reports_degraded_on_sync_failure(self, tmp_path):
+        from memgar.feed.loader import FeedLoader
+
+        loader = FeedLoader(cache_dir=str(tmp_path), verify_signature=False, max_age_days=0)
+        loader._fetch_release_info = lambda: None
+
+        def _boom(url):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        loader._download = _boom
+
+        result = loader.load(auto_sync=True)
+        assert result is None
+
+        h = loader.health()
+        assert h["status"] == "degraded"
+        assert h["last_outcome"] == "failure"
+        assert h["last_error"] is not None
+        assert "404" in h["last_error"] or "HTTPError" in h["last_error"]
+
+    def test_health_reports_ok_on_cache_hit(self, tmp_path):
+        from memgar.feed.cache import FeedCache
+        from memgar.feed.loader import FeedLoader
+        from memgar.feed.models import FeedManifest, FeedSignature, PatternBundle
+
+        cache = FeedCache(cache_dir=str(tmp_path))
+        sig = FeedSignature(signature_b64="AAAA==", signed_at="")
+        manifest = FeedManifest(
+            feed_version="1.2.3", published_at="", min_memgar_version="0.5.0",
+            pattern_count=0, bundle_sha256="", signature=sig,
+        )
+        cache.save_bundle(PatternBundle(manifest=manifest, patterns=[]))
+
+        loader = FeedLoader(cache_dir=str(tmp_path), verify_signature=False)
+        loader.load(auto_sync=False)
+
+        h = loader.health()
+        assert h["status"] == "ok"
+        assert h["last_outcome"] == "cache_hit"
+        assert h["last_bundle_version"] == "1.2.3"
+        assert h["cached_bundle"] is not None
+
+
+# Import for the new tests above (kept local so we don't change module-level
+# imports that other test classes might depend on).
+import urllib.error  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # CLI feed commands

@@ -261,21 +261,28 @@ class LLMConfig:
 @dataclass
 class AnalysisConfig:
     """Analysis engine configuration."""
-    
+
     # Risk thresholds
     risk_threshold_block: int = 80
     risk_threshold_quarantine: int = 40
-    
+
     # Analysis features
     enable_semantic: bool = False
     use_llm: bool = False
     strict_mode: bool = False
-    
+
+    # Fail-close mode: when True, any input that could not be fully analyzed
+    # (because one or more ML/semantic layers are degraded) is escalated to
+    # at least Decision.QUARANTINE rather than being allowed through.
+    # Recommended for high-risk environments (finance, healthcare, auth flows).
+    # Env var: MEMGAR_FAIL_CLOSE=true
+    fail_close: bool = False
+
     # Sliding window
     use_sliding_window: bool = True
     window_size: int = 1000
     window_overlap: int = 200
-    
+
     # Performance
     max_content_length: int = 1000000  # 1MB
     batch_size: int = 10
