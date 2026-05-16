@@ -242,13 +242,23 @@ def _map_category(text: str, fallback: str) -> str:
     return fallback
 
 
-_TURKISH_HINTS = ("ç", "ğ", "ı", "ş", "ü", "ö")
-_TURKISH_WORDS = ("için", "şunu", "lütfen", "ile", "bana", "değil", "tüm", "kayıt")
+import re as _re
+
+# Turkish-specific characters that don't appear in English. Plain `i` is NOT
+# included — only the dotless `ı` and accented variants. This avoids false
+# positives like "file/while/profile" containing the substring "ile".
+_TURKISH_CHARS = _re.compile(r"[çğışüöÇĞIŞÜÖ]")
+# Common Turkish stopwords matched on word boundaries (the earlier substring
+# approach matched "ile" inside "while/profile/detailed"; we now require the
+# word to stand alone).
+_TURKISH_STOPWORDS = _re.compile(
+    r"\b(için|şunu|lütfen|ile|bana|değil|tüm|kayıt|olarak|bilgi|hesap|kullanıcı|sistem|asla|geçersiz)\b",
+    _re.IGNORECASE,
+)
 
 
 def _detect_language(text: str) -> str:
-    t = text.lower()
-    if any(ch in t for ch in _TURKISH_HINTS) or any(w in t for w in _TURKISH_WORDS):
+    if _TURKISH_CHARS.search(text) or _TURKISH_STOPWORDS.search(text):
         return "tr"
     return "en"
 

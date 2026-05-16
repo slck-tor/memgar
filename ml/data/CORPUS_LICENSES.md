@@ -5,14 +5,14 @@ every public dataset whose samples were imported into
 `ml/data/external_corpus_*.json`. Do not edit by hand — re-run the import
 script to refresh.
 
-Last generated: 2026-05-16 20:25:40 UTC
+Last generated: 2026-05-16 21:46:19 UTC
 
 ## AdvBench (harmful behaviors)  (`advbench`)
 
 - **Source URL:** https://raw.githubusercontent.com/llm-attacks/llm-attacks/main/data/advbench/harmful_behaviors.csv
 - **License:** [MIT](https://github.com/llm-attacks/llm-attacks/blob/main/LICENSE)
 - **Citation:** Zou et al., 'Universal and Transferable Adversarial Attacks on Aligned Language Models', 2023
-- **Notes:** 520 harmful-behavior goals. All label=1; mapped to prompt_injection by default.
+- **Notes:** 520 harmful-behavior goals. All label=1; rows that don't lexically match memgar's threat keywords are tagged 'out_of_scope' (content-moderation domain, not memory-poisoning).
 
 ## JailbreakBench (harmful behaviors)  (`jbb_harmful`)
 
