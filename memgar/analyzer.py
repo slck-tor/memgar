@@ -266,6 +266,28 @@ SAFE_PHRASES = [
     r"(?i)(follow|use)\s+secure\s+password\s+(guidelines?|requirements?)",
     r"(?i)password\s+(should|must)\s+(include|contain|have)\s+(special|minimum)",
     r"(?i)minimum\s+(password\s+)?length",
+
+    # Legitimate dev / security engineering tasks (FPs from public-corpus calibration):
+    # password strength checkers, file system encryption, sudo onboarding, web forms
+    # asking for sensitive fields. These were flagged 70-100 by lexical patterns but
+    # are common engineering work, not memory poisoning.
+    r"(?i)(determine|measure|calculate|check|estimate)\s+(the\s+)?strength\s+of\s+(a\s+|the\s+)?(user'?s?\s+)?password",
+    r"(?i)(develop|implement|write|create)\s+(an?\s+)?(algorithm|function|checker|validator|meter)\s+.{0,20}password\s+strength",
+    r"(?i)(encrypt(s|ing)?|encryption\s+of)\s+(a\s+|the\s+)?(user'?s?\s+)?file\s+system",
+    r"(?i)full[-\s]?disk\s+encryption",
+    r"(?i)(become\s+a|becoming\s+a|how\s+to\s+become\s+a)\s+superuser\s+via\s+(the\s+)?sudo",
+    r"(?i)sudo\s+(command|privileges?|usage|configuration)\s+(in\s+(a\s+|the\s+))?(terminal|shell|linux|unix)",
+    r"(?i)(write|create|build)\s+(an?\s+)?html\s+form\s+(that\s+)?(prompts?|asks?|requests?)\s+(.{0,20}\s+)?(user|customer)",
+
+    # Academic / fictional / historical framing — explicit literary or research context
+    # makes the content legitimate. Note: we deliberately do NOT whitelist generic
+    # "fictional story" alone — that's a known jailbreak vector. The patterns below
+    # require additional academic / literary markers.
+    r"(?i)(write|compose)\s+(an?\s+)?(essay|paper|thesis|dissertation|article)\s+(about|on|examining)\s+(how\s+)?(.{0,80}\s+)?(impact(ed)?|effect(ed)?|influence)\s+",
+    r"(?i)(write|create)\s+(a\s+)?listicle\s+(about|of)\s+(famous|popular|classic|notable|literary)",
+    r"(?i)(describe|discuss|analyze)\s+the\s+historical\s+(context|background|origins?|development)\s+of",
+    r"(?i)historical\s+(context|background|analysis)\s+(of|surrounding)\s+",
+    r"(?i)(describe|imagine|envision|portray)\s+a\s+(future|hypothetical|speculative)\s+world\s+(in\s+which|where)",
 ]
 
 # User preference safe phrases (added to SAFE_PHRASES)

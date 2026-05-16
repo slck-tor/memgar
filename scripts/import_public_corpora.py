@@ -179,6 +179,65 @@ def _parse_harmbench(blob: bytes) -> Iterable[dict]:
         }
 
 
+def _parse_hf_rows(blob: bytes) -> Iterable[dict]:
+    """Parse a multi-line JSON file produced by `_fetch_hf_dataset` — one JSON
+    object per row with arbitrary feature names. The source-specific parser
+    below handles field mapping.
+    """
+    for line in blob.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
+def _parse_gandalf(blob: bytes) -> Iterable[dict]:
+    """Lakera/gandalf_ignore_instructions: every row is a real prompt-injection
+    attempt against the Gandalf game. All label=1.
+    """
+    for row in _parse_hf_rows(blob):
+        text = (row.get("text") or "").strip()
+        if not text:
+            continue
+        yield {
+            "text": text,
+            "label": 1,
+            "category": _map_category(text, fallback="prompt_injection"),
+            "source": "gandalf_ignore_instructions",
+        }
+
+
+def _parse_deepset_pi(blob: bytes) -> Iterable[dict]:
+    """deepset/prompt-injections: text + label (1 = injection, 0 = benign)."""
+    for row in _parse_hf_rows(blob):
+        text = (row.get("text") or "").strip()
+        lab = row.get("label")
+        if not text or lab is None:
+            continue
+        label = int(lab)
+        cat = _map_category(text, fallback="prompt_injection") if label == 1 else "benign"
+        yield {
+            "text": text,
+            "label": label,
+            "category": cat,
+            "source": "deepset_prompt_injections",
+        }
+
+
+@dataclass
+class HFSource(Source):
+    """A source whose data is pulled via the HuggingFace datasets-server JSON
+    API rather than a raw file URL. `url` here is the dataset name (e.g.
+    'Lakera/gandalf_ignore_instructions'); `splits` lists the splits to
+    aggregate; `config` selects the dataset config (default = 'default')."""
+
+    splits: tuple[str, ...] = ("train",)
+    config: str = "default"
+
+
 SOURCES: dict[str, Source] = {
     "advbench": Source(
         name="AdvBench (harmful behaviors)",
@@ -216,6 +275,26 @@ SOURCES: dict[str, Source] = {
         notes="Filtered to cybercrime_intrusion + misinformation_disinformation only (other categories are content-moderation scope).",
         parser=_parse_harmbench,
     ),
+    "gandalf": HFSource(
+        name="Lakera Gandalf (ignore-instructions prompts)",
+        url="Lakera/gandalf_ignore_instructions",
+        license_name="MIT",
+        license_url="https://huggingface.co/datasets/Lakera/gandalf_ignore_instructions",
+        attribution="Lakera AI, 'Gandalf Ignore Instructions' dataset (collected from the Gandalf prompt-injection game), HuggingFace",
+        notes="1000 real prompt-injection attempts from the Gandalf game. All label=1; mapped to prompt_injection.",
+        parser=_parse_gandalf,
+        splits=("train", "validation", "test"),
+    ),
+    "deepset_pi": HFSource(
+        name="deepset/prompt-injections",
+        url="deepset/prompt-injections",
+        license_name="Apache-2.0",
+        license_url="https://huggingface.co/datasets/deepset/prompt-injections",
+        attribution="deepset GmbH, 'prompt-injections' dataset, HuggingFace",
+        notes="662 text+label rows (label=1 → prompt injection, label=0 → benign). Used for both attack patterns and FP calibration.",
+        parser=_parse_deepset_pi,
+        splits=("train", "test"),
+    ),
 }
 
 
@@ -242,13 +321,23 @@ def _map_category(text: str, fallback: str) -> str:
     return fallback
 
 
-_TURKISH_HINTS = ("ç", "ğ", "ı", "ş", "ü", "ö")
-_TURKISH_WORDS = ("için", "şunu", "lütfen", "ile", "bana", "değil", "tüm", "kayıt")
+import re as _re
+
+# Turkish-specific characters that don't appear in English. Plain `i` is NOT
+# included — only the dotless `ı` and accented variants. This avoids false
+# positives like "file/while/profile" containing the substring "ile".
+_TURKISH_CHARS = _re.compile(r"[çğışüöÇĞIŞÜÖ]")
+# Common Turkish stopwords matched on word boundaries (the earlier substring
+# approach matched "ile" inside "while/profile/detailed"; we now require the
+# word to stand alone).
+_TURKISH_STOPWORDS = _re.compile(
+    r"\b(için|şunu|lütfen|ile|bana|değil|tüm|kayıt|olarak|bilgi|hesap|kullanıcı|sistem|asla|geçersiz)\b",
+    _re.IGNORECASE,
+)
 
 
 def _detect_language(text: str) -> str:
-    t = text.lower()
-    if any(ch in t for ch in _TURKISH_HINTS) or any(w in t for w in _TURKISH_WORDS):
+    if _TURKISH_CHARS.search(text) or _TURKISH_STOPWORDS.search(text):
         return "tr"
     return "en"
 
@@ -278,6 +367,66 @@ def _fetch(url: str, cache_path: Path, timeout: int = 30) -> bytes:
             last_err = e
             time.sleep(2 ** attempt)
     raise RuntimeError(f"Failed to fetch {url}: {last_err}")
+
+
+def _fetch_hf_dataset(
+    dataset: str,
+    splits: tuple[str, ...],
+    config: str,
+    cache_path: Path,
+    timeout: int = 30,
+    page_size: int = 100,
+) -> bytes:
+    """Pull every row from one or more HuggingFace dataset splits via the
+    datasets-server JSON API. Caches the assembled JSONL bytes at `cache_path`.
+
+    The datasets-server pagination caps each call at ~100 rows; we walk
+    `offset` until `num_rows_total` is reached. Returns a JSONL blob where
+    each line is one row dict — the source-specific parser consumes it.
+    """
+    if cache_path.exists():
+        return cache_path.read_bytes()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    base = "https://datasets-server.huggingface.co/rows"
+    ds_enc = urllib.request.quote(dataset, safe="")
+    cfg_enc = urllib.request.quote(config, safe="")
+
+    chunks: list[bytes] = []
+    for split in splits:
+        sp_enc = urllib.request.quote(split, safe="")
+        offset = 0
+        while True:
+            url = (
+                f"{base}?dataset={ds_enc}&config={cfg_enc}&split={sp_enc}"
+                f"&offset={offset}&length={page_size}"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": "memgar-corpus-import/1.0"})
+            last_err: Exception | None = None
+            data: bytes | None = None
+            for attempt in range(4):
+                try:
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        data = resp.read()
+                    break
+                except urllib.error.URLError as e:
+                    last_err = e
+                    time.sleep(2 ** attempt)
+            if data is None:
+                raise RuntimeError(f"Failed to fetch HF page {url}: {last_err}")
+
+            payload = json.loads(data)
+            rows = payload.get("rows", [])
+            for r in rows:
+                chunks.append(json.dumps(r.get("row", {}), ensure_ascii=False).encode("utf-8"))
+            total = payload.get("num_rows_total", 0)
+            offset += len(rows)
+            if not rows or offset >= total:
+                break
+
+    blob = b"\n".join(chunks)
+    cache_path.write_bytes(blob)
+    return blob
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +529,7 @@ def _write_license_manifest(path: Path, used: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sources", default="advbench,jbb_harmful,jbb_benign,harmbench",
+    parser.add_argument("--sources", default="advbench,jbb_harmful,jbb_benign,harmbench,gandalf,deepset_pi",
                         help="Comma-separated source keys (see SOURCES dict).")
     parser.add_argument("--out-raw", default="ml/data/external_corpus_raw.json")
     parser.add_argument("--out-hard", default="ml/data/external_corpus_hard.json")
@@ -408,10 +557,15 @@ def main() -> int:
 
     for key in requested:
         src = SOURCES[key]
-        print(f"[{key}] fetching {src.url}")
-        cache_file = cache_dir / f"{key}.csv"
+        is_hf = isinstance(src, HFSource)
+        ext = "jsonl" if is_hf else "csv"
+        print(f"[{key}] fetching {src.url} ({'HF API' if is_hf else 'direct'})")
+        cache_file = cache_dir / f"{key}.{ext}"
         try:
-            blob = _fetch(src.url, cache_file)
+            if is_hf:
+                blob = _fetch_hf_dataset(src.url, src.splits, src.config, cache_file)
+            else:
+                blob = _fetch(src.url, cache_file)
         except Exception as e:
             print(f"[{key}] FETCH FAILED: {e}")
             per_source_stats[key] = {"fetched": 0, "kept": 0, "deduped": 0, "error": str(e)}
