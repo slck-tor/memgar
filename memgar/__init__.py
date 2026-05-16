@@ -119,6 +119,10 @@ from memgar.policy_engine import (
     most_restrictive,
     get_global_engine,
     reset_global_engine,
+    ReviewNotifier,
+    LoggingReviewNotifier,
+    CallbackReviewNotifier,
+    HITLReviewNotifier,
 )
 from memgar.memory_vault import (
     MemoryVault,
@@ -129,6 +133,24 @@ from memgar.memory_vault import (
     RollbackPlan,
     VaultVerificationResult,
 )
+from memgar.secure_memory_store import (
+    SecureMemoryStore,
+    SecureMemoryStorePolicy,
+    SecureWriteResult,
+    DLPRedactor,
+    DLPPolicy,
+    DLPResult,
+    SecureMemoryBoundaryError,
+    SecureMemoryBypassError,
+    SecureMemoryWriteError,
+)
+from memgar.quarantine import (
+    QuarantineStore,
+    QuarantineEntry,
+    QuarantineStatus,
+    QuarantineFull,
+    QuarantineStateError,
+)
 
 # =============================================================================
 # LAYER 2: SANITIZATION (Always available)
@@ -137,6 +159,14 @@ from memgar.sanitizer import (
     InstructionSanitizer,
     SanitizeResult,
     SanitizeAction,
+)
+from memgar.multilingual_detector import (
+    MultilingualDetector,
+    MultilingualResult,
+    MULTILINGUAL_THREAT_EXAMPLES,
+    detect_script_ratio,
+    NON_LATIN_THRESHOLD,
+    get_multilingual_detector,
 )
 
 # =============================================================================

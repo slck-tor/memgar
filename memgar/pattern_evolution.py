@@ -141,10 +141,10 @@ class LLMVariantGenerator:
     def _default_model(self) -> str:
         """Get default model for provider."""
         if self.provider == "anthropic":
-            return "claude-sonnet-4-20250514"
+            return "claude-sonnet-4-6"
         elif self.provider == "openai":
             return "gpt-4-turbo-preview"
-        return "claude-sonnet-4-20250514"
+        return "claude-sonnet-4-6"
     
     def _get_client(self):
         """Lazy-load LLM client."""

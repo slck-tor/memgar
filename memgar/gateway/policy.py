@@ -21,6 +21,8 @@ from urllib.parse import urlparse
 class PolicyDecision(str, Enum):
     ALLOW = "allow"
     SANITIZE = "sanitize"
+    QUARANTINE = "quarantine"
+    HUMAN_REVIEW = "human_review"
     BLOCK = "block"
 
 
