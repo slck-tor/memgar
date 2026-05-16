@@ -1060,6 +1060,7 @@ class Analyzer:
         ensemble_voter: bool = True,
         canary_manager: Any = None,
         similarity_layer: bool = True,
+        fail_close: bool | None = None,
     ) -> None:
         """
         Initialize the analyzer.
@@ -1084,6 +1085,13 @@ class Analyzer:
         self.use_sliding_window = use_sliding_window
         self.window_size = window_size
         self.window_overlap = window_overlap
+
+        # fail_close: escalate Decision.ALLOW → QUARANTINE when any ML layer
+        # is degraded so the call can't be fully analyzed. Reads from env var
+        # MEMGAR_FAIL_CLOSE=true if not set explicitly via constructor arg.
+        if fail_close is None:
+            fail_close = os.environ.get("MEMGAR_FAIL_CLOSE", "").lower() in ("1", "true", "yes")
+        self._fail_close: bool = bool(fail_close)
 
         # Combine default and custom patterns
         # Load patterns: pickle cache (3ms) → full import (3500ms)
@@ -1671,6 +1679,21 @@ class Analyzer:
                 self._integrity_store.snapshot(entry)
             except Exception:
                 pass
+
+        # fail_close: if any ML/semantic layer is degraded the analysis is
+        # incomplete. Escalate ALLOW → QUARANTINE so uncertain inputs never
+        # slip through silently in high-risk environments.
+        if self._fail_close and result.decision == Decision.ALLOW:
+            degraded = self._degraded_layers()
+            if degraded:
+                result.decision = Decision.QUARANTINE
+                result.explanation = (
+                    f"[fail_close] Escalated ALLOW→QUARANTINE: {len(degraded)} "
+                    f"layer(s) degraded ({', '.join(degraded)}). "
+                    "Enable those layers or set fail_close=False to permit. "
+                    "Original: " + result.explanation
+                )
+                result.layers_used = list(result.layers_used) + ["fail_close"]
 
         return result
 
@@ -2400,6 +2423,21 @@ class Analyzer:
         
         return "\n".join(lines)
     
+    def _degraded_layers(self) -> list[str]:
+        """Return names of ML layers that are currently degraded."""
+        degraded: list[str] = []
+        sg = getattr(self, "_semantic_guard", None)
+        sg_deg = getattr(self, "_semantic_guard_degraded", None)
+        if sg is None and sg_deg is not None:
+            degraded.append("layer1.5_semantic_guard")
+        tx_deg = getattr(self, "_transformer_degraded", None)
+        if self._transformer is None and tx_deg is not None:
+            degraded.append("layer2_ml_transformer")
+        feed = _LAST_FEED_HEALTH
+        if feed and feed.get("status") == "degraded":
+            degraded.append("threat_feed")
+        return degraded
+
     def quick_check(self, content: str) -> bool:
         """
         Quick check if content might be malicious.
