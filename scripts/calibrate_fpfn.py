@@ -148,8 +148,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--corpus",
-        default="ml/data/calibration_corpus.json",
-        help="Path to labeled calibration corpus JSON",
+        default=None,
+        action="append",
+        help=(
+            "Path to a labeled corpus JSON. Pass multiple times to evaluate "
+            "on a merged corpus (e.g. --corpus a.json --corpus b.json). "
+            "Defaults to ml/data/calibration_corpus.json. Useful for layering "
+            "hand-curated gold with auto-mined or augmented corpora."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -176,9 +182,25 @@ def main() -> int:
 
     use_llm = bool(args.use_llm) and not args.no_llm
 
-    corpus_path = (ROOT / args.corpus) if not Path(args.corpus).is_absolute() else Path(args.corpus)
-    samples = _load_corpus(corpus_path)
-    logger.info("Loaded %d samples from %s", len(samples), corpus_path)
+    # argparse with action="append" stays None when nothing is passed, since
+    # the `default=` is overridden on first --corpus. Restore default when empty.
+    corpus_args = args.corpus or ["ml/data/calibration_corpus.json"]
+    corpus_paths = [(ROOT / c) if not Path(c).is_absolute() else Path(c) for c in corpus_args]
+    samples: list[dict[str, Any]] = []
+    seen_text: set[str] = set()
+    for cp in corpus_paths:
+        rows = _load_corpus(cp)
+        kept = 0
+        for r in rows:
+            key = (r.get("text") or "").strip().lower()
+            if not key or key in seen_text:
+                continue
+            seen_text.add(key)
+            samples.append(r)
+            kept += 1
+        logger.info("Loaded %d new samples from %s (dedup applied)", kept, cp)
+    corpus_path = corpus_paths[0]  # primary corpus for report metadata
+    logger.info("Merged corpus size: %d samples across %d files", len(samples), len(corpus_paths))
 
     # Build Analyzer
     from memgar.analyzer import Analyzer

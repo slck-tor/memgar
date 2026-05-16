@@ -331,19 +331,33 @@ jobs:
       - name: Rebuild model artifact
         run: python rebuild_model.py
 
-      - name: Run FP/FN calibration
+      - name: Run FP/FN calibration (gold corpus)
         run: |
           python scripts/calibrate_fpfn.py \
             --corpus ml/data/calibration_corpus.json \
             --output ml/artifacts/fpfn_calibration.json \
             --no-llm
 
-      - name: Assert minimum quality gates
+      - name: Assert gold-corpus minimum quality gates
         run: python scripts/check_calibration_gate.py
 
-      - name: Upload calibration report
+      - name: Run expanded calibration (gold + mined + memory-context)
+        run: |
+          python scripts/calibrate_fpfn.py \
+            --corpus ml/data/calibration_corpus.json \
+            --corpus ml/data/mined_hard_subset.json \
+            --corpus ml/data/augmented_memory_context.json \
+            --output ml/artifacts/fpfn_calibration_expanded.json \
+            --no-llm
+
+      - name: Assert expanded-corpus regression gates
+        run: python scripts/check_expanded_gate.py
+
+      - name: Upload calibration reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fpfn-calibration-${{ github.sha }}
-          path: ml/artifacts/fpfn_calibration.json
+          path: |
+            ml/artifacts/fpfn_calibration.json
+            ml/artifacts/fpfn_calibration_expanded.json
