@@ -157,6 +157,7 @@ nav:
           - Training Transformer: development/training.md
   - Threats:
       - Catalog: threats/catalog.md
+      - Kill Chain: threats/kill-chain.md
       - Categories: architecture/threats.md
       - Memory Poisoning 101: threats/memory-poisoning-101.md
       - Reporting a Vulnerability: security.md
