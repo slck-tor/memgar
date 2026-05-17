@@ -103,7 +103,7 @@ class FeedLoader:
         self._used_fallback_url = False
         if release is None:
             self._last_outcome = "failure"
-            self._last_error = "release_info_unavailable"
+            self._last_error = self._last_error or "release_info_unavailable (HTTPError/URLError/parsing failure)"
             return None
 
         download_url = self._find_asset_url(release)
@@ -201,12 +201,15 @@ class FeedLoader:
                 logger.info("No GitHub release found for %s: %s", self._repo, exc)
                 return {"assets": []}
             logger.warning("GitHub API request failed: %s", exc)
+            self._last_error = f"HTTPError: {exc}"
             return None
         except urllib.error.URLError as exc:
             logger.warning("GitHub API request failed: %s", exc)
+            self._last_error = f"URLError: {exc}"
             return None
         except Exception as exc:
             logger.warning("Failed to fetch release info: %s", exc)
+            self._last_error = f"{type(exc).__name__}: {exc}"
             return None
 
     def _find_asset_url(self, release: Dict[str, Any]) -> Optional[str]:
