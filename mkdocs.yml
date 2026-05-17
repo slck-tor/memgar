@@ -1,6 +1,6 @@
 site_name: Memgar
 site_description: Memory poisoning defense for AI agents — detect, sanitize, quarantine, and block unsafe memory before it influences an agent.
-site_url: https://memgar.io/
+site_url: https://memgar.com/
 site_author: Memgar contributors
 repo_name: slcxtor/memgar
 repo_url: https://github.com/slcxtor/memgar

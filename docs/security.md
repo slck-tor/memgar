@@ -11,7 +11,7 @@
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Please report security issues by emailing **security@memgar.io** with:
+Please report security issues by emailing **security@memgar.com** with:
 
 1. A description of the vulnerability and its potential impact
 2. Steps to reproduce (proof-of-concept code is helpful)
