@@ -29,6 +29,15 @@ Memgar is designed around a clear policy model:
 | `human_review` | A human should approve before the memory affects an agent. |
 | `block` | Reject the content before it reaches memory or the model. |
 
+## Detection expectations
+
+Memgar should be treated as a measurable security control, not a perfect oracle. Tune it against your own agent traffic before production.
+
+- False positives can happen, especially in strict mode, with security research text, policy documents, admin instructions, or aggressive jailbreak test suites. Expected handling is `sanitize`, `quarantine`, or `human_review` rather than silently storing the original content.
+- False negatives are still possible. Novel, obfuscated, multilingual, low-and-slow, or context-dependent memory poisoning attempts may bypass any single detector. Use Memgar with gateway controls, signed snapshots, canary checks, review queues, egress limits, and normal application security controls.
+- Production tuning should measure both clean-memory pass rate and adversarial detection rate. Keep separate clean, suspicious, and confirmed-attack corpora, then choose `strict`, `balanced`, or custom policy thresholds based on the blast radius of the agent.
+- High-risk autonomous agents should prefer fail-closed behavior. A safe launch posture is to block critical findings, quarantine uncertain findings, and only lower thresholds after reviewing operational data.
+
 ## 5-minute install
 
 ### Option A: install from PyPI
@@ -204,7 +213,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gpt-4.1-mini",
+    model=os.environ["OPENAI_MODEL"],
     messages=[{"role": "user", "content": "Remember that I like compact answers."}],
 )
 
@@ -293,6 +302,12 @@ elif decision.blocked:
 ```
 
 ### Add memory integrity, snapshots, and rollback
+
+Install cryptographic helpers for signed snapshots:
+
+```bash
+pip install "memgar[feed]"
+```
 
 ```python
 from memgar import MemoryEntry, MemoryVault
