@@ -27,18 +27,27 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from memgar import Analyzer, MemoryEntry
-from memgar.tool_use_guard import ToolUseGuard, ToolDecision
+from memgar.tool_use_guard import ToolDecision, ToolUseGuard
 
 logger = logging.getLogger("memgar.gateway.mcp")
+
+
+_DEFAULT_TOOL_ALLOWLIST_HOSTS = (
+    "api.openai.com",
+    "api.anthropic.com",
+)
 
 
 # ---------------------------------------------------------------------------
 # Decision record
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MCPDecision:
@@ -53,12 +62,20 @@ class MCPDecision:
 # Proxy
 # ---------------------------------------------------------------------------
 
+
 class MCPProxy:
     """Per-server MCP enforcement layer.
 
     Args:
         analyzer: Memgar Analyzer instance.
         tool_guard: optional ToolUseGuard for policy on tool calls.
+        tool_allowlist_hosts: optional host allowlist for default ToolUseGuard.
+            If omitted, the proxy falls back to a strict built-in SaaS allowlist.
+        upstream_base_url: optional upstream URL whose host is added to the
+            allowlist fallback path.
+        block_confirmations: block ToolUseGuard decisions that require human
+            confirmation. Defaults to True for fail-closed operation.
+        fail_open: when True, analyzer/guard errors are treated as ALLOW.
         block_canary_leaks: redact/block tool *results* containing canaries.
         block_poisoned_definitions: refuse to surface tools whose
             descriptions look like prompt injections.
@@ -68,11 +85,33 @@ class MCPProxy:
         self,
         analyzer: Optional[Analyzer] = None,
         tool_guard: Optional[ToolUseGuard] = None,
+        tool_allowlist_hosts: Optional[List[str]] = None,
+        upstream_base_url: Optional[str] = None,
+        block_confirmations: bool = True,
+        fail_open: bool = False,
         block_canary_leaks: bool = True,
         block_poisoned_definitions: bool = True,
     ) -> None:
         self.analyzer = analyzer or Analyzer(use_llm=False)
-        self.tool_guard = tool_guard or ToolUseGuard()
+        self.block_confirmations = bool(block_confirmations)
+        self.fail_open = bool(fail_open)
+
+        resolved_hosts = _resolve_tool_allowlist_hosts(
+            allowlist_hosts=tool_allowlist_hosts,
+            upstream_base_url=upstream_base_url,
+        )
+        if tool_guard is None:
+            guard_hosts = resolved_hosts or list(_DEFAULT_TOOL_ALLOWLIST_HOSTS)
+            self.tool_guard = ToolUseGuard(allowlist_hosts=guard_hosts)
+        else:
+            self.tool_guard = tool_guard
+
+        if getattr(self.tool_guard, "allowlist_hosts", None) is None:
+            raise ValueError(
+                "MCPProxy requires ToolUseGuard with allowlist_hosts. "
+                "Use a strict allowlist to prevent SSRF-style tool exfiltration."
+            )
+
         self.block_canary_leaks = block_canary_leaks
         self.block_poisoned_definitions = block_poisoned_definitions
 
@@ -133,7 +172,14 @@ class MCPProxy:
         try:
             check = self.tool_guard.check_call(tool_name, arguments)
         except Exception as exc:
-            return MCPDecision(allowed=True, risk_score=0, reason=f"guard error: {exc}")
+            if self.fail_open:
+                return MCPDecision(allowed=True, risk_score=0, reason=f"guard error: {exc}")
+            return MCPDecision(
+                allowed=False,
+                risk_score=100,
+                reason=f"guard error: {exc}",
+                findings=["guard_error"],
+            )
 
         if check.decision == ToolDecision.BLOCK:
             return MCPDecision(
@@ -141,6 +187,16 @@ class MCPProxy:
                 risk_score=check.risk_score,
                 reason=check.rationale or "tool guard blocked the call",
                 findings=[f.technique for f in check.findings],
+            )
+        if check.decision == ToolDecision.REQUIRE_CONFIRMATION and self.block_confirmations:
+            return MCPDecision(
+                allowed=False,
+                risk_score=max(check.risk_score, 70),
+                reason=(
+                    check.rationale
+                    or "tool guard requires human confirmation; strict MCP proxy blocks confirmation-required calls"
+                ),
+                findings=[f.technique for f in check.findings] or ["requires_confirmation"],
             )
 
         # Also analyze the concatenation of string args for poisoning intent
@@ -153,11 +209,19 @@ class MCPProxy:
                 ))
                 if result.decision.value == "block":
                     return MCPDecision(
-                        allowed=False, risk_score=result.risk_score,
-                        reason=result.explanation, findings=["analyzer_block"],
+                        allowed=False,
+                        risk_score=result.risk_score,
+                        reason=result.explanation,
+                        findings=["analyzer_block"],
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                if not self.fail_open:
+                    return MCPDecision(
+                        allowed=False,
+                        risk_score=100,
+                        reason=f"analyzer error: {exc}",
+                        findings=["analyzer_error"],
+                    )
         return MCPDecision(allowed=True, risk_score=check.risk_score)
 
     def _filter_tools_list(
@@ -214,6 +278,7 @@ class MCPProxy:
     @staticmethod
     def _collect_strings(value: Any) -> str:
         out: List[str] = []
+
         def walk(v: Any) -> None:
             if isinstance(v, str):
                 out.append(v)
@@ -223,6 +288,7 @@ class MCPProxy:
             elif isinstance(v, (list, tuple, set)):
                 for k in v:
                     walk(k)
+
         walk(value)
         return "\n".join(out)
 
@@ -239,6 +305,7 @@ class MCPProxy:
 # ---------------------------------------------------------------------------
 # stdio runner
 # ---------------------------------------------------------------------------
+
 
 async def run_stdio_proxy(
     upstream_command: List[str],
@@ -261,8 +328,14 @@ async def run_stdio_proxy(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
-                   direction: str) -> None:
+    if process.stdin is None or process.stdout is None:
+        raise RuntimeError("failed to create upstream stdio pipes")
+
+    async def pipe(
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        direction: str,
+    ) -> None:
         while not reader.at_eof():
             line = await reader.readline()
             if not line:
@@ -288,19 +361,36 @@ async def run_stdio_proxy(
     loop = asyncio.get_event_loop()
     stdin_reader = asyncio.StreamReader()
     await loop.connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(stdin_reader), open("/dev/stdin", "rb"),
+        lambda: asyncio.StreamReaderProtocol(stdin_reader),
+        sys.stdin.buffer,
     )
 
-    stdout_transport, _ = await loop.connect_write_pipe(
-        asyncio.streams.FlowControlMixin, open("/dev/stdout", "wb"),
+    stdout_transport, stdout_protocol = await loop.connect_write_pipe(
+        asyncio.streams.FlowControlMixin,
+        sys.stdout.buffer,
     )
-    stdout_writer = asyncio.StreamWriter(stdout_transport, _, None, loop)
+    stdout_writer = asyncio.StreamWriter(stdout_transport, stdout_protocol, None, loop)
 
     await asyncio.gather(
-        pipe(stdin_reader, process.stdin, "outgoing"),  # type: ignore
-        pipe(process.stdout, stdout_writer, "incoming"),  # type: ignore
+        pipe(stdin_reader, process.stdin, "outgoing"),
+        pipe(process.stdout, stdout_writer, "incoming"),
     )
     return await process.wait()
+
+
+def _resolve_tool_allowlist_hosts(
+    allowlist_hosts: Optional[List[str]],
+    upstream_base_url: Optional[str],
+) -> List[str]:
+    if allowlist_hosts:
+        hosts = [item.strip().lower() for item in allowlist_hosts if item and item.strip()]
+        if hosts:
+            return hosts
+    if upstream_base_url:
+        parsed = urlparse(upstream_base_url)
+        if parsed.hostname:
+            return [parsed.hostname.lower()]
+    return []
 
 
 __all__ = ["MCPProxy", "MCPDecision", "run_stdio_proxy"]

@@ -20,6 +20,7 @@ try:
         GatewayPolicy, InputPolicy, OutputPolicy, PolicyDecision,
     )
     from memgar.gateway.mcp_proxy import MCPProxy
+    from memgar.tool_use_guard import ToolUseGuard
     _GATEWAY_AVAILABLE = True
 except ImportError:
     _GATEWAY_AVAILABLE = False
@@ -280,6 +281,35 @@ class TestMCPProxy:
         assert "error" in out
         assert out["error"]["code"] == -32001
         assert out["id"] == 7
+
+    def test_disallowed_tool_url_blocked_by_default_firewall(self):
+        frame = {
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": {
+                "name": "http_get",
+                "arguments": {"url": "https://evil.attacker.com/exfil"},
+            },
+        }
+        out = self.proxy.filter_outgoing_request(frame)
+        assert "error" in out
+        assert out["error"]["code"] == -32001
+        assert "findings" in out["error"]["data"]
+
+    def test_custom_tool_guard_without_allowlist_rejected(self):
+        with pytest.raises(ValueError):
+            MCPProxy(tool_guard=ToolUseGuard())
+
+    def test_custom_allowlist_allows_expected_tool_url(self):
+        proxy = MCPProxy(tool_allowlist_hosts=["api.example.com"])
+        frame = {
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {
+                "name": "http_get",
+                "arguments": {"url": "https://api.example.com/data"},
+            },
+        }
+        out = proxy.filter_outgoing_request(frame)
+        assert "error" not in out
 
     def test_canary_in_tool_result_redacted(self):
         canary = self.proxy.analyzer.issue_canary("t", "a", label="z")

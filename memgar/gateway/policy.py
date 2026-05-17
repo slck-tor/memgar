@@ -33,6 +33,7 @@ class InputPolicy:
     sanitize_risk_score: int = 40
     scan_all_messages: bool = True
     scan_tool_arguments: bool = True
+    enforce_tool_argument_firewall: bool = True
     blocked_models: List[str] = field(default_factory=list)
 
 
@@ -181,6 +182,10 @@ class GatewayPolicy:
     allowed_upstream_schemes: List[str] = field(default_factory=lambda: ["https"])
     allow_private_upstreams: bool = False
 
+    # Tool argument firewall controls. If unset, tool egress host allowlist
+    # inherits the validated upstream host.
+    tool_allowlist_hosts: Optional[List[str]] = None
+
     input: InputPolicy = field(default_factory=InputPolicy)
     output: OutputPolicy = field(default_factory=OutputPolicy)
 
@@ -219,6 +224,33 @@ class GatewayPolicy:
         allowed = self.allowed_upstream_hosts or [host]
         if not any(_host_matches(host, item) for item in allowed):
             raise ValueError(f"upstream host {host!r} is not in the allowlist")
+
+        if self.input.enforce_tool_argument_firewall and not self.input.scan_tool_arguments:
+            raise ValueError(
+                "tool argument firewall is enabled but input.scan_tool_arguments is False"
+            )
+
+        if self.input.enforce_tool_argument_firewall:
+            if not self.resolved_tool_allowlist_hosts(host):
+                raise ValueError(
+                    "tool argument firewall is enabled but no tool allowlist hosts are configured"
+                )
+
+    def resolved_tool_allowlist_hosts(self, upstream_host: Optional[str] = None) -> List[str]:
+        """Return normalized tool egress allowlist hosts for firewall checks."""
+
+        if self.tool_allowlist_hosts:
+            hosts = [
+                _normalize_host(item)
+                for item in self.tool_allowlist_hosts
+                if item and _normalize_host(item)
+            ]
+            if hosts:
+                return hosts
+        host = upstream_host or urlparse(self.upstream_base_url).hostname
+        if host:
+            return [_normalize_host(host)]
+        return []
 
     def build_upstream_url(self, path: str) -> str:
         """Build and validate the final upstream URL for a proxied path."""

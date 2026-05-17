@@ -45,6 +45,26 @@ def test_gateway_policy_rejects_ssrf_upstreams(url):
         GatewayPolicy(upstream_base_url=url).validate_upstream_base_url()
 
 
+def test_gateway_tool_argument_firewall_is_mandatory_by_default():
+    from memgar.gateway.policy import GatewayPolicy, InputPolicy
+
+    with pytest.raises(ValueError):
+        GatewayPolicy(input=InputPolicy(scan_tool_arguments=False)).validate_upstream_base_url()
+
+
+def test_gateway_tool_argument_firewall_can_be_explicitly_relaxed():
+    from memgar.gateway.policy import GatewayPolicy, InputPolicy
+
+    policy = GatewayPolicy(
+        input=InputPolicy(
+            scan_tool_arguments=False,
+            enforce_tool_argument_firewall=False,
+        )
+    )
+
+    policy.validate_upstream_base_url()
+
+
 def test_gateway_sanitize_rewrites_payload_content():
     _require_gateway_app_extras()
 
