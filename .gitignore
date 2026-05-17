@@ -15,6 +15,22 @@
 *.safetensors
 ml/artifacts/transformer_model/
 ml/artifacts/transformer_checkpoints/
+ml/artifacts/transformer_model_int8/
+
+# EXCEPTION: keep the committed prod inference artifacts (small ONNX + tokenizer
+# files). Listed explicitly so `git add ml/artifacts/transformer_model/` works
+# while keeping the checkpoint directory ignored.
+!ml/artifacts/transformer_model/model.onnx
+!ml/artifacts/transformer_model/tokenizer/
+!ml/artifacts/transformer_model/tokenizer/**
+!ml/artifacts/transformer_model/config.json
+!ml/artifacts/transformer_model/model.config.json
+!ml/artifacts/transformer_model_int8/model.onnx
+!ml/artifacts/transformer_model_int8/tokenizer.json
+!ml/artifacts/transformer_model_int8/tokenizer_config.json
+!ml/artifacts/transformer_model_int8/vocab.txt
+!ml/artifacts/transformer_model_int8/special_tokens_map.json
+!ml/artifacts/transformer_model_int8/config.json
 
 # Keep current model config, ignore backups and versioned snapshots
 !*.pkl.config.json
