@@ -122,6 +122,59 @@ try:
 except ImportError:
     pass
 
+# Mem0 (memory-management framework)
+MEM0_AVAILABLE = False
+MemgarMem0Guard = None
+try:
+    from .mem0 import MemgarMem0Guard, MEM0_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+# Letta / MemGPT (memory-centric agent framework)
+LETTA_AVAILABLE = False
+MemgarLettaGuard = None
+try:
+    from .letta import MemgarLettaGuard, LETTA_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+# Vector DB native adapters
+PINECONE_AVAILABLE = False
+MemgarPineconeIndex = None
+try:
+    from .pinecone import MemgarPineconeIndex, PINECONE_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+CHROMA_AVAILABLE = False
+MemgarChromaCollection = None
+try:
+    from .chroma import MemgarChromaCollection, CHROMA_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+QDRANT_AVAILABLE = False
+MemgarQdrantClient = None
+try:
+    from .qdrant import MemgarQdrantClient, QDRANT_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+WEAVIATE_AVAILABLE = False
+MemgarWeaviateCollection = None
+try:
+    from .weaviate import MemgarWeaviateCollection, WEAVIATE_AVAILABLE  # noqa: F811
+except ImportError:
+    pass
+
+# Shared vector base — always available (no third-party deps)
+from ._vector_base import (
+    VectorStoreSecurityShell,
+    WritePolicy,
+    WriteScanRecord,
+    VectorWriteBlocked,
+)
+
 # =============================================================================
 # RAG FRAMEWORKS (Layer 3)
 # =============================================================================
@@ -183,9 +236,19 @@ def get_available_integrations() -> dict:
         "openai_agents": OPENAI_AGENTS_AVAILABLE,
         "mcp": MCP_AVAILABLE,
 
+        # Memory frameworks
+        "mem0": MEM0_AVAILABLE,
+        "letta": LETTA_AVAILABLE,
+
         # RAG frameworks
         "langchain_rag": LANGCHAIN_RAG_AVAILABLE,
         "llamaindex": LLAMAINDEX_AVAILABLE,
+
+        # Vector databases
+        "pinecone": PINECONE_AVAILABLE,
+        "chroma": CHROMA_AVAILABLE,
+        "qdrant": QDRANT_AVAILABLE,
+        "weaviate": WEAVIATE_AVAILABLE,
     }
 
 
