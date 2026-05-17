@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
-    { name = "Selcuk", email = "hello@memgar.io" }
+    { name = "Selcuk", email = "hello@memgar.com" }
 ]
 keywords = [
     "ai-security", "llm-security", "agent-security", "memory-poisoning",
@@ -130,8 +130,8 @@ all = [
 memgar = "memgar.cli:main"
 
 [project.urls]
-Homepage = "https://memgar.io"
-Documentation = "https://docs.memgar.io"
+Homepage = "https://memgar.com"
+Documentation = "https://docs.memgar.com"
 Repository = "https://github.com/slck-tor/memgar"
 Issues = "https://github.com/slck-tor/memgar/issues"
 Changelog = "https://github.com/slck-tor/memgar/blob/main/CHANGELOG.md"

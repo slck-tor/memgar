@@ -30,7 +30,7 @@ CLI Usage:
     $ memgar watch ./memories.txt
     $ memgar patterns --severity critical
 
-For more information, visit https://memgar.io
+For more information, visit https://memgar.com
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from typing import Optional
 __version__ = "0.5.6"
 __author__ = "Memgar"
 __license__ = "MIT"
-__email__ = "hello@memgar.io"
+__email__ = "hello@memgar.com"
 
 # =============================================================================
 # CORE MODELS (Always available)

@@ -113,7 +113,7 @@ def main() -> None:
         
         memgar check "User prefers dark mode"
     
-    For more information, visit https://memgar.io
+    For more information, visit https://memgar.com
     """
     pass
 
@@ -642,8 +642,8 @@ def version() -> None:
     print_banner()
     console.print(f"\n[bold]Version:[/bold] {__version__}")
     console.print(f"[bold]Patterns:[/bold] {len(PATTERNS)}")
-    console.print(f"[bold]Website:[/bold] https://memgar.io")
-    console.print(f"[bold]Docs:[/bold] https://docs.memgar.io")
+    console.print(f"[bold]Website:[/bold] https://memgar.com")
+    console.print(f"[bold]Docs:[/bold] https://docs.memgar.com")
 
 
 @main.command()
