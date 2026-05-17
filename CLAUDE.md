@@ -94,7 +94,37 @@ python rebuild_model.py
 
 # Red-team dry run
 python scripts/red_team_run.py --n-seeds 10 --n-variants 5 --dry-run --offline
+
+# Corpus expansion pipeline (Phase 1 + 2 of corpus growth)
+python scripts/import_public_corpora.py            # AdvBench/JBB/HarmBench/gandalf/deepset → external_corpus_*.json
+python scripts/mine_hard_negatives.py              # Diagnostic subset: all FPs + top-N FN per category → mined_hard_subset.json
+python scripts/augment_memory_context.py           # Wrap attack seeds in 8 memory-injection envelopes → augmented_memory_context.json
+python scripts/merge_corpus.py --aux ml/data/mined_hard_subset.json \
+    --aux ml/data/augmented_memory_context.json    # Dry-run: see merged stats (gold stays untouched)
+
+# Calibration (two-tier)
+python scripts/calibrate_fpfn.py \
+    --corpus ml/data/calibration_corpus.json \
+    --output ml/artifacts/fpfn_calibration.json --no-llm
+python scripts/check_calibration_gate.py           # Gold-only: 8 strict gates (CI blocker)
+
+python scripts/calibrate_fpfn.py \
+    --corpus ml/data/calibration_corpus.json \
+    --corpus ml/data/mined_hard_subset.json \
+    --corpus ml/data/augmented_memory_context.json \
+    --output ml/artifacts/fpfn_calibration_expanded.json --no-llm
+python scripts/check_expanded_gate.py              # Merged: 6 regression-only gates
 ```
+
+## Corpus tiers
+
+| Tier | File | Source | Reviewed | Used by |
+|---|---|---|---|---|
+| Gold | `ml/data/calibration_corpus.json` | hand-curated | yes | CI gate (strict) |
+| Mined | `ml/data/mined_hard_subset.json` | auto from public-corpus FN/FP | algorithmic | Expanded gate |
+| Augmented | `ml/data/augmented_memory_context.json` | template wrappers on seeds | deterministic | Expanded gate |
+| Review queue | `ml/data/mined_review_queue.json` | boundary cases | pending | manual import only |
+| Raw external | `ml/data/external_corpus_raw.json` | full public-corpus dump | none | reference only |
 
 ## Key Files
 
@@ -113,6 +143,13 @@ python scripts/red_team_run.py --n-seeds 10 --n-variants 5 --dry-run --offline
 | `memgar/siem.py` | OCSF-compatible SIEM events |
 | `scripts/publish_feed.py` | Maintainer tool: sign + publish feed bundle |
 | `scripts/red_team_run.py` | CLI: generate + inject adversarial variants |
+| `scripts/import_public_corpora.py` | Pull + normalize public datasets (AdvBench, JBB, HarmBench, Gandalf, deepset) |
+| `scripts/mine_hard_negatives.py` | Stratify hard subset → auto-merge-safe selection + review queue |
+| `scripts/augment_memory_context.py` | Wrap attack seeds in 8 memory-injection envelopes |
+| `scripts/merge_corpus.py` | Combine gold + auxiliary corpora (dry-run by default) |
+| `scripts/calibrate_fpfn.py` | End-to-end Analyzer evaluation, accepts multiple `--corpus` flags |
+| `scripts/check_calibration_gate.py` | Strict gold-only CI gate (8 gates) |
+| `scripts/check_expanded_gate.py` | Regression-only merged-corpus gate (6 gates) |
 | `feeds/memgar-feed.json.gz` | Signed feed bundle (committed, auto-updated by CI) |
 
 ## Configuration

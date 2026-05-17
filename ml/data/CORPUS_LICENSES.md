@@ -5,7 +5,7 @@ every public dataset whose samples were imported into
 `ml/data/external_corpus_*.json`. Do not edit by hand — re-run the import
 script to refresh.
 
-Last generated: 2026-05-16 22:38:22 UTC
+Last generated: 2026-05-17 12:05:17 UTC
 
 ## AdvBench (harmful behaviors)  (`advbench`)
 
@@ -48,6 +48,13 @@ Last generated: 2026-05-16 22:38:22 UTC
 - **License:** [Apache-2.0](https://huggingface.co/datasets/deepset/prompt-injections)
 - **Citation:** deepset GmbH, 'prompt-injections' dataset, HuggingFace
 - **Notes:** 662 text+label rows (label=1 → prompt injection, label=0 → benign). Used for both attack patterns and FP calibration.
+
+## TrustAIRLab in-the-wild jailbreak prompts  (`trustairlab_jb`)
+
+- **Source URL:** TrustAIRLab/in-the-wild-jailbreak-prompts
+- **License:** [MIT](https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts)
+- **Citation:** Shen et al., '"Do Anything Now": Characterizing and Evaluating In-the-Wild Jailbreak Prompts on Large Language Models', CCS 2024
+- **Notes:** 1405 real-world DAN/jailbreak prompts harvested from Discord/Reddit. Multi-paragraph; tests memgar's sliding-window path.
 
 ## Memgar usage
 

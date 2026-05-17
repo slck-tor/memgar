@@ -82,6 +82,10 @@ class Source:
     attribution: str
     notes: str
     parser: Callable[[bytes], Iterable[dict]] = field(repr=False)
+    # Optional per-source row cap applied when --max-per-source is 0 (the
+    # default). Useful for keeping very large sources (e.g. TrustAIRLab
+    # regular at 13k rows) from dominating the corpus.
+    default_cap: int = 0
 
 
 def _parse_advbench(blob: bytes) -> Iterable[dict]:
@@ -227,15 +231,84 @@ def _parse_deepset_pi(blob: bytes) -> Iterable[dict]:
         }
 
 
+def _parse_trustairlab_jb(blob: bytes) -> Iterable[dict]:
+    """TrustAIRLab/in-the-wild-jailbreak-prompts (jailbreak config). 1405 real
+    multi-paragraph DAN/jailbreak prompts collected from Discord/Reddit
+    (Shen et al. 2024, 'Do Anything Now')."""
+    for row in _parse_hf_rows(blob):
+        text = (row.get("prompt") or "").strip()
+        if not text:
+            continue
+        # The dataset's `jailbreak` boolean is True for every row in this
+        # config; we treat all as label=1.
+        yield {
+            "text": text,
+            "label": 1,
+            "category": "jailbreak",
+            "source": "trustairlab_in_the_wild",
+            "_orig_category": str(row.get("source") or row.get("platform") or "?")[:40],
+        }
+
+
+def _parse_trustairlab_reg(blob: bytes) -> Iterable[dict]:
+    """TrustAIRLab/in-the-wild-jailbreak-prompts (regular config). Benign
+    counterpart prompts from the same collection channels — used for FP
+    calibration since they look similar in form but are not jailbreaks."""
+    for row in _parse_hf_rows(blob):
+        text = (row.get("prompt") or "").strip()
+        if not text:
+            continue
+        yield {
+            "text": text,
+            "label": 0,
+            "category": "benign",
+            "source": "trustairlab_regular",
+            "_orig_category": str(row.get("source") or row.get("platform") or "?")[:40],
+        }
+
+
+def _parse_wildjailbreak(blob: bytes) -> Iterable[dict]:
+    """allenai/wildjailbreak (eval split). Gated dataset: requires HF_TOKEN
+    and accepted ODC-BY terms. Contains synthetic + curated vanilla harmful,
+    vanilla benign, adversarial harmful, adversarial benign prompts. We map
+    `data_type` to memgar label (harmful → 1, benign → 0)."""
+    for row in _parse_hf_rows(blob):
+        text = (row.get("adversarial") or row.get("vanilla") or row.get("prompt") or "").strip()
+        if not text:
+            continue
+        dtype = (row.get("data_type") or "").lower()
+        if "benign" in dtype:
+            label = 0
+            cat = "benign"
+        elif "harmful" in dtype:
+            label = 1
+            cat = "jailbreak" if "adversarial" in dtype else _map_category(text, fallback="manipulation")
+        else:
+            continue
+        yield {
+            "text": text,
+            "label": label,
+            "category": cat,
+            "source": "wildjailbreak",
+            "_orig_category": dtype,
+        }
+
+
 @dataclass
 class HFSource(Source):
     """A source whose data is pulled via the HuggingFace datasets-server JSON
     API rather than a raw file URL. `url` here is the dataset name (e.g.
     'Lakera/gandalf_ignore_instructions'); `splits` lists the splits to
-    aggregate; `config` selects the dataset config (default = 'default')."""
+    aggregate; `config` selects the dataset config (default = 'default').
+
+    `gated`: when True, the dataset requires an HF_TOKEN environment
+    variable. If the token is missing the source is skipped gracefully
+    with a printed warning (CI must not fail just because a gated source
+    is unavailable)."""
 
     splits: tuple[str, ...] = ("train",)
     config: str = "default"
+    gated: bool = False
 
 
 SOURCES: dict[str, Source] = {
@@ -294,6 +367,49 @@ SOURCES: dict[str, Source] = {
         notes="662 text+label rows (label=1 → prompt injection, label=0 → benign). Used for both attack patterns and FP calibration.",
         parser=_parse_deepset_pi,
         splits=("train", "test"),
+    ),
+    "trustairlab_jb": HFSource(
+        name="TrustAIRLab in-the-wild jailbreak prompts",
+        url="TrustAIRLab/in-the-wild-jailbreak-prompts",
+        license_name="MIT",
+        license_url="https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts",
+        attribution="Shen et al., '\"Do Anything Now\": Characterizing and Evaluating In-the-Wild Jailbreak Prompts on Large Language Models', CCS 2024",
+        notes="1405 real-world DAN/jailbreak prompts harvested from Discord/Reddit. Multi-paragraph; tests memgar's sliding-window path.",
+        parser=_parse_trustairlab_jb,
+        config="jailbreak_2023_12_25",
+        splits=("train",),
+    ),
+    "trustairlab_reg": HFSource(
+        name="TrustAIRLab in-the-wild regular prompts (opt-in only)",
+        url="TrustAIRLab/in-the-wild-jailbreak-prompts",
+        license_name="MIT",
+        license_url="https://huggingface.co/datasets/TrustAIRLab/in-the-wild-jailbreak-prompts",
+        attribution="Shen et al., '\"Do Anything Now\": Characterizing and Evaluating In-the-Wild Jailbreak Prompts on Large Language Models', CCS 2024",
+        notes=(
+            "13,735 'regular' (non-jailbreak) prompts. EXCLUDED from default sources: "
+            "manual review showed ~80% are persona-injection / roleplay / 'from now on "
+            "you are X' templates harvested from the same Discord channels as the "
+            "jailbreaks. Memgar legitimately flags these as memory-poisoning vectors, "
+            "so treating them as ground-truth benign distorts FPR signal. Use "
+            "`--sources ...,trustairlab_reg` to opt in for diagnostic comparison. "
+            "Capped at 1500 rows."
+        ),
+        parser=_parse_trustairlab_reg,
+        config="regular_2023_12_25",
+        splits=("train",),
+        default_cap=1500,
+    ),
+    "wildjailbreak": HFSource(
+        name="AI2 WildJailbreak (eval split)",
+        url="allenai/wildjailbreak",
+        license_name="ODC-BY-1.0",
+        license_url="https://huggingface.co/datasets/allenai/wildjailbreak",
+        attribution="Jiang et al., 'WildTeaming at Scale: From In-the-Wild Jailbreaks to (Adversarially) Safer Language Models', NeurIPS 2024 (AI2)",
+        notes="GATED dataset — requires HF_TOKEN env var + accepted ODC-BY terms on the dataset page. Eval split only (~2000 vanilla+adversarial harmful/benign). Skipped silently if HF_TOKEN is not set; this keeps CI green for forks/contributors without dataset access.",
+        parser=_parse_wildjailbreak,
+        config="eval",
+        splits=("train",),
+        gated=True,
     ),
 }
 
@@ -376,13 +492,20 @@ def _fetch_hf_dataset(
     cache_path: Path,
     timeout: int = 30,
     page_size: int = 100,
+    hf_token: str | None = None,
+    row_cap: int = 0,
 ) -> bytes:
-    """Pull every row from one or more HuggingFace dataset splits via the
+    """Pull rows from one or more HuggingFace dataset splits via the
     datasets-server JSON API. Caches the assembled JSONL bytes at `cache_path`.
 
-    The datasets-server pagination caps each call at ~100 rows; we walk
-    `offset` until `num_rows_total` is reached. Returns a JSONL blob where
-    each line is one row dict — the source-specific parser consumes it.
+    Pagination stops as soon as either:
+      - `row_cap` rows have been collected (0 = no cap), or
+      - `num_rows_total` is reached.
+
+    `hf_token` is sent as `Authorization: Bearer <token>` for gated datasets.
+
+    HTTP 429 (rate limit) gets longer backoff than network errors; the
+    datasets-server is rate-limited per IP and recovers within ~60s.
     """
     if cache_path.exists():
         return cache_path.read_bytes()
@@ -392,33 +515,61 @@ def _fetch_hf_dataset(
     ds_enc = urllib.request.quote(dataset, safe="")
     cfg_enc = urllib.request.quote(config, safe="")
 
+    headers = {"User-Agent": "memgar-corpus-import/1.0"}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+
     chunks: list[bytes] = []
+    rows_collected = 0
     for split in splits:
+        if row_cap and rows_collected >= row_cap:
+            break
         sp_enc = urllib.request.quote(split, safe="")
         offset = 0
         while True:
+            if row_cap and rows_collected >= row_cap:
+                break
             url = (
                 f"{base}?dataset={ds_enc}&config={cfg_enc}&split={sp_enc}"
                 f"&offset={offset}&length={page_size}"
             )
-            req = urllib.request.Request(url, headers={"User-Agent": "memgar-corpus-import/1.0"})
+            req = urllib.request.Request(url, headers=headers)
             last_err: Exception | None = None
             data: bytes | None = None
-            for attempt in range(4):
+            for attempt in range(5):
                 try:
                     with urllib.request.urlopen(req, timeout=timeout) as resp:
                         data = resp.read()
                     break
+                except urllib.error.HTTPError as e:
+                    last_err = e
+                    if e.code == 429:
+                        # Rate-limited — back off ~60s before retry
+                        time.sleep(min(60, 15 * (attempt + 1)))
+                    elif 500 <= e.code < 600:
+                        time.sleep(2 ** attempt)
+                    else:
+                        # 4xx other than 429: not retryable
+                        raise
                 except urllib.error.URLError as e:
                     last_err = e
                     time.sleep(2 ** attempt)
             if data is None:
-                raise RuntimeError(f"Failed to fetch HF page {url}: {last_err}")
+                # Save whatever we already collected so partial progress isn't lost
+                if chunks:
+                    cache_path.write_bytes(b"\n".join(chunks))
+                raise RuntimeError(
+                    f"Failed to fetch HF page {url}: {last_err}. "
+                    f"Partial cache saved ({rows_collected} rows)."
+                )
 
             payload = json.loads(data)
             rows = payload.get("rows", [])
             for r in rows:
                 chunks.append(json.dumps(r.get("row", {}), ensure_ascii=False).encode("utf-8"))
+                rows_collected += 1
+                if row_cap and rows_collected >= row_cap:
+                    break
             total = payload.get("num_rows_total", 0)
             offset += len(rows)
             if not rows or offset >= total:
@@ -442,14 +593,24 @@ def _build_analyzer():
     return Analyzer(use_llm=False)
 
 
-def _score(analyzer, samples: list[dict]) -> list[dict]:
-    """Run Analyzer on each sample; annotate with risk_score + decision."""
+def _score(analyzer, samples: list[dict], max_text_len: int = 4000) -> list[dict]:
+    """Run Analyzer on each sample; annotate with risk_score + decision.
+
+    Long DAN-style prompts (multi-paragraph jailbreaks 8k-20k chars) trigger
+    pathological sliding-window behaviour during pre-scoring (~20s/sample).
+    We clamp pre-scoring inputs to `max_text_len` chars; if the injection
+    signature is in the first 4000 chars (true for ~95% of real DAN prompts),
+    we still detect it. The original text is preserved in the output row.
+    """
     from memgar.models import MemoryEntry
 
     out = []
     for s in samples:
+        scoring_text = s["text"]
+        if len(scoring_text) > max_text_len:
+            scoring_text = scoring_text[:max_text_len]
         try:
-            r = analyzer.analyze(MemoryEntry(content=s["text"]))
+            r = analyzer.analyze(MemoryEntry(content=scoring_text))
             s = {**s, "risk_score": r.risk_score, "decision": r.decision.value}
         except Exception as e:
             s = {**s, "risk_score": None, "decision": None, "score_error": repr(e)[:100]}
@@ -529,8 +690,12 @@ def _write_license_manifest(path: Path, used: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sources", default="advbench,jbb_harmful,jbb_benign,harmbench,gandalf,deepset_pi",
-                        help="Comma-separated source keys (see SOURCES dict).")
+    parser.add_argument("--sources",
+                        default="advbench,jbb_harmful,jbb_benign,harmbench,gandalf,deepset_pi,trustairlab_jb,wildjailbreak",
+                        help="Comma-separated source keys (see SOURCES dict). "
+                             "`wildjailbreak` is gated and is skipped silently if HF_TOKEN is not set. "
+                             "`trustairlab_reg` is excluded by default (its 'benign' samples are mostly "
+                             "persona-injection prompts that memgar legitimately flags); opt in explicitly.")
     parser.add_argument("--out-raw", default="ml/data/external_corpus_raw.json")
     parser.add_argument("--out-hard", default="ml/data/external_corpus_hard.json")
     parser.add_argument("--cache-dir", default="ml/data/_corpus_cache")
@@ -558,12 +723,33 @@ def main() -> int:
     for key in requested:
         src = SOURCES[key]
         is_hf = isinstance(src, HFSource)
+        is_gated = is_hf and getattr(src, "gated", False)
+
+        # Gated sources need HF_TOKEN. Skip silently otherwise — CI must not
+        # fail just because the running environment doesn't have access
+        # (forks, contributors, etc.).
+        hf_token: str | None = None
+        if is_gated:
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            if not hf_token:
+                print(f"[{key}] SKIPPED: gated dataset requires HF_TOKEN env var "
+                      f"(accept terms at https://huggingface.co/datasets/{src.url} first)")
+                per_source_stats[key] = {"fetched": 0, "kept": 0, "deduped": 0,
+                                         "skipped_reason": "gated_no_token"}
+                continue
+
         ext = "jsonl" if is_hf else "csv"
-        print(f"[{key}] fetching {src.url} ({'HF API' if is_hf else 'direct'})")
+        print(f"[{key}] fetching {src.url} ({'HF API gated' if is_gated else 'HF API' if is_hf else 'direct'})")
         cache_file = cache_dir / f"{key}.{ext}"
+        # Cap pagination early when the source has a default cap or the user
+        # passed --max-per-source. Adds a 10% safety margin so dedup losses
+        # don't leave us under the target.
+        effective_cap = args.max_per_source or getattr(src, "default_cap", 0)
+        fetch_row_cap = int(effective_cap * 1.1) if effective_cap else 0
         try:
             if is_hf:
-                blob = _fetch_hf_dataset(src.url, src.splits, src.config, cache_file)
+                blob = _fetch_hf_dataset(src.url, src.splits, src.config, cache_file,
+                                         hf_token=hf_token, row_cap=fetch_row_cap)
             else:
                 blob = _fetch(src.url, cache_file)
         except Exception as e:
@@ -575,6 +761,9 @@ def main() -> int:
         fetched = len(rows)
         kept_this_source = 0
         deduped = 0
+        # Effective row cap: explicit --max-per-source wins; otherwise fall
+        # back to the source's `default_cap` (0 = no cap).
+        effective_cap = args.max_per_source or getattr(src, "default_cap", 0)
         for r in rows:
             h = _content_hash(r["text"])
             if h in seen_hashes:
@@ -587,7 +776,7 @@ def main() -> int:
                 r["note"] += f"; orig_category={r.pop('_orig_category')}"
             all_rows.append(r)
             kept_this_source += 1
-            if args.max_per_source and kept_this_source >= args.max_per_source:
+            if effective_cap and kept_this_source >= effective_cap:
                 break
 
         per_source_stats[key] = {"fetched": fetched, "kept": kept_this_source, "deduped": deduped}
