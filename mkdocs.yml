@@ -9,7 +9,6 @@ copyright: MIT licensed. Built by the memgar community.
 
 theme:
   name: material
-  custom_dir: docs/overrides
   font:
     text: Inter
     code: JetBrains Mono

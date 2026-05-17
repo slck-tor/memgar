@@ -314,7 +314,7 @@ class CloudConfig:
 
     enabled: bool = False
     api_key: Optional[str] = None
-    api_url: str = "https://api.memgar.io"
+    api_url: str = "https://api.memgar.com"
     sync_enabled: bool = False
 
 
@@ -662,7 +662,7 @@ def _dict_to_config(data: Dict[str, Any]) -> MemgarConfig:
         config.cloud = CloudConfig(
             enabled=cloud_data.get("enabled", False),
             api_key=cloud_data.get("api_key"),
-            api_url=cloud_data.get("api_url", "https://api.memgar.io"),
+            api_url=cloud_data.get("api_url", "https://api.memgar.com"),
             sync_enabled=cloud_data.get("sync_enabled", False),
         )
     
