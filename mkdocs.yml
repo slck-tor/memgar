@@ -1,0 +1,131 @@
+site_name: Memgar
+site_description: Memory poisoning defense for AI agents — detect, sanitize, quarantine, and block unsafe memory before it influences an agent.
+site_url: https://memgar.io/
+site_author: Memgar contributors
+repo_name: slcxtor/memgar
+repo_url: https://github.com/slcxtor/memgar
+edit_uri: edit/main/docs/
+copyright: MIT licensed. Memgar contributors.
+
+theme:
+  name: material
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/slcxtor/memgar
+      name: Source on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/memgar/
+      name: PyPI package
+  status:
+    new: Added recently
+    deprecated: Deprecated
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: "#"
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: slcxtor
+      repo: memgar
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search
+  - glightbox
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - 4-Layer Pipeline: architecture/pipeline.md
+      - Threat Categories: architecture/threats.md
+      - Corpus Tiers: architecture/corpus.md
+  - Integration:
+      - Basic Usage: integration/basic.md
+      - LangChain: integration/langchain.md
+      - Configuration: integration/configuration.md
+  - Operations:
+      - Health Monitoring: operations/health.md
+      - Observability: operations/observability.md
+      - Threat Feed: operations/feed.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Calibration: development/calibration.md
+      - Training Transformer: development/training.md
+  - Security: security.md
+  - Changelog: changelog.md

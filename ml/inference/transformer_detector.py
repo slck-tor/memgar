@@ -258,10 +258,12 @@ class TransformerDetector:
             max_length=self._max_length,
             truncation=True,
         )
-        logits = self._onnx_sess.run(
-            None,
-            {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]},
-        )[0]
+        # BERT-style models declare token_type_ids as a required ONNX input.
+        # DistilBERT and similar architectures only take input_ids + mask.
+        # We probe the session's required input names once and feed only
+        # what the model actually expects.
+        feed = self._build_feed(enc)
+        logits = self._onnx_sess.run(None, feed)[0]
         return float(_softmax(logits[0])[1])
 
     def _predict_batch_onnx(self, texts: list[str]) -> list[float]:
@@ -272,11 +274,25 @@ class TransformerDetector:
             max_length=self._max_length,
             truncation=True,
         )
-        logits = self._onnx_sess.run(
-            None,
-            {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]},
-        )[0]
+        feed = self._build_feed(enc)
+        logits = self._onnx_sess.run(None, feed)[0]
         return [float(_softmax(row)[1]) for row in logits]
+
+    def _build_feed(self, enc) -> dict:
+        """Build the ONNX input feed, filtered to the names the model declares.
+        Caches the required-name set after the first call."""
+        names = getattr(self, "_onnx_input_names", None)
+        if names is None:
+            names = {inp.name for inp in self._onnx_sess.get_inputs()}
+            self._onnx_input_names = names
+        feed = {}
+        if "input_ids" in names:
+            feed["input_ids"] = enc["input_ids"]
+        if "attention_mask" in names:
+            feed["attention_mask"] = enc["attention_mask"]
+        if "token_type_ids" in names and "token_type_ids" in enc:
+            feed["token_type_ids"] = enc["token_type_ids"]
+        return feed
 
     def _predict_torch(self, text: str) -> float:
         import torch
