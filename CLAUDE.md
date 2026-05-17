@@ -6,14 +6,31 @@ Memgar is a production-grade AI agent memory security library. It detects and bl
 
 ## Architecture
 
-### 4-Layer Analysis Pipeline (`memgar/analyzer.py`)
+### Analysis Pipeline (`memgar/analyzer.py`)
 
 ```
-Layer 1 — Pattern Matching         <1ms    always on
-Layer 2 — LLM Semantic Analysis    ~200ms  optional (use_llm=True)
-Layer 3 — Trust-Aware Scoring      <0.1ms  auto (when source registered)
-Layer 4 — Behavioral Baseline      <1ms    auto (per-agent, after warm-up)
+Layer 1   — Pattern Matching             <1ms    always on
+Layer 1.5 — SemanticGuard (embeddings)   ~5ms    optional (sentence-transformers)
+Layer 2   — LLM Semantic Analysis        ~200ms  optional (use_llm=True)
+Layer 2-ML — Transformer (ONNX)          ~7ms    optional (artifact required, see below)
+Layer 3   — Trust-Aware Scoring          <0.1ms  auto (when source registered)
+Layer 4   — Behavioral Baseline          <1ms    auto (per-agent, after warm-up)
 ```
+
+Layer 2-ML is **infrastructure-only by default** — memgar ships the
+TransformerDetector code and the training script (`scripts/train_transformer.py`)
+but does NOT bundle a pre-trained ONNX artifact. Reason: the default
+training_data.json distribution (academic AI Q&A benigns + template attacks)
+does not match real production-agent traffic; a model trained against it
+generalises poorly to prosaic everyday inputs ("User prefers dark mode")
+and raises Analyzer FPR from 0.09 to 0.5+ in the ensemble. Bring your own
+domain-representative dataset and run:
+
+    python scripts/train_transformer.py --data path/to/your_data.json
+
+When `ml/artifacts/transformer_model/model.onnx` is present, Layer 2-ML
+activates automatically; when absent, it disables gracefully and
+`Analyzer.health_check()` reports `tokenizer_dir_missing` (no exception).
 
 **Layer 1** (`_layer1_pattern_matching`): Regex + keyword matching against 736 threat patterns loaded from `memgar/patterns.py` (pickle-cached for 3ms load vs 3500ms cold).
 

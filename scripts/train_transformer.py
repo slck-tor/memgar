@@ -1,15 +1,36 @@
 #!/usr/bin/env python3
-"""Launch training for the Layer 2-ML transformer detector.
+"""Train the Layer 2-ML transformer detector for memgar.
 
-Trains `prajjwal1/bert-mini` (11M params) on a 5000-sample stratified subset
-of ml/data/training_data.json (1 epoch, batch size 32, CPU-friendly).
-Exports to ONNX FP32 and int8-quantized variants. Total artifact size
-target: <50MB so the model can be committed directly to git without LFS.
+IMPORTANT — domain shift warning (May 2026):
+
+The default training_data.json is built from memgar's own attack patterns +
+LLM-generated academic-style benigns ("What's RLHF?", "Explain Claude
+architecture"). On a fresh-corpus end-to-end calibration the resulting
+model produces near-identical probability distributions for attacks and
+real-world benigns (attack median ~0.94, benign median ~0.92), which makes
+the model useless inside Analyzer's ensemble (and harmful at threshold
+≤ 0.92, where it raises FPR from 0.091 → 0.78 on the gold gate).
+
+For that reason memgar **does not ship a pre-trained transformer artifact**.
+The TransformerDetector code path is fully implemented and idempotent —
+when an artifact is present at ml/artifacts/transformer_model/, Layer 2-ML
+activates; when absent, it disables gracefully and Layer 1 + Layer 3 +
+Layer 4 carry the load.
+
+If you have domain-representative training data (real user messages from
+your agent, labelled into attack/benign), train your own artifact:
+
+    python scripts/train_transformer.py --data path/to/your_data.json
+
+Defaults below (prajjwal1/bert-mini, 10K samples, 1 epoch) are CPU-friendly
+and produce ~45 MB FP32 + ~12 MB int8 ONNX artifacts that fit under
+GitHub's 100 MB per-file ceiling without Git LFS.
 
 Usage:
     python scripts/train_transformer.py
+        [--data ml/data/training_data.json]
         [--base-model prajjwal1/bert-mini]
-        [--subset 5000]
+        [--subset 10000]
         [--epochs 1]
         [--batch-size 32]
         [--quantize]
