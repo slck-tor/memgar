@@ -99,12 +99,17 @@ class FeedLoader:
     def sync(self) -> Optional[PatternBundle]:
         """Fetch the latest release, verify signature, cache, and return bundle."""
         self._last_attempt_at = time.time()
-        release = self._fetch_release_info()  # None when no release or network failure
-
-        download_url = self._find_asset_url(release) if release else None
+        release = self._fetch_release_info()  # None means release metadata was unreachable.
         self._used_fallback_url = False
+        if release is None:
+            self._last_outcome = "failure"
+            self._last_error = "release_info_unavailable"
+            return None
+
+        download_url = self._find_asset_url(release)
         if not download_url:
-            # No release asset — fall back to the committed dist/ file.
+            # Release metadata was reachable, but no release asset exists yet —
+            # fall back to the committed dist/ file.
             fallback = _RAW_FALLBACK_URL.format(repo=self._repo)
             logger.info("No release asset found, trying fallback URL: %s", fallback)
             download_url = fallback
@@ -191,6 +196,12 @@ class FeedLoader:
         try:
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                logger.info("No GitHub release found for %s: %s", self._repo, exc)
+                return {"assets": []}
+            logger.warning("GitHub API request failed: %s", exc)
+            return None
         except urllib.error.URLError as exc:
             logger.warning("GitHub API request failed: %s", exc)
             return None
