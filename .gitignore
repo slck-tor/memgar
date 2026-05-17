@@ -10,27 +10,37 @@
 *.model
 *.weights
 
-# Transformer / ONNX artifacts (generated during training — not committed)
-*.onnx
-*.safetensors
-ml/artifacts/transformer_model/
-ml/artifacts/transformer_checkpoints/
-ml/artifacts/transformer_model_int8/
+# Transformer / ONNX artifacts.
+# We DO NOT use directory-level ignore rules here, because once a directory
+# is ignored git silently drops all `!` exceptions for files inside it. We
+# instead allowlist the inference-time artifacts and ignore everything else
+# under ml/artifacts/transformer_model* by glob.
 
-# EXCEPTION: keep the committed prod inference artifacts (small ONNX + tokenizer
-# files). Listed explicitly so `git add ml/artifacts/transformer_model/` works
-# while keeping the checkpoint directory ignored.
-!ml/artifacts/transformer_model/model.onnx
-!ml/artifacts/transformer_model/tokenizer/
-!ml/artifacts/transformer_model/tokenizer/**
-!ml/artifacts/transformer_model/config.json
-!ml/artifacts/transformer_model/model.config.json
-!ml/artifacts/transformer_model_int8/model.onnx
-!ml/artifacts/transformer_model_int8/tokenizer.json
-!ml/artifacts/transformer_model_int8/tokenizer_config.json
-!ml/artifacts/transformer_model_int8/vocab.txt
-!ml/artifacts/transformer_model_int8/special_tokens_map.json
-!ml/artifacts/transformer_model_int8/config.json
+# General rule: ignore safetensors and stray onnx outside the model dirs
+*.safetensors
+
+# Ignore training-time checkpoints (large optimizer + scheduler state)
+ml/artifacts/transformer_checkpoints/
+
+# Ignore the training-time PyTorch dump inside transformer_model/
+# (we ship the ONNX export only — pytorch/*.bin is ~44MB and not used at inference)
+ml/artifacts/transformer_model/pytorch/
+
+# Ignore everything else under both model dirs by glob, then explicitly
+# allow the inference-time files. This pattern survives git's directory
+# semantics because no parent directory is itself ignored.
+ml/artifacts/transformer_model/**/*.bin
+ml/artifacts/transformer_model/**/*.pt
+ml/artifacts/transformer_model/**/*.pth
+ml/artifacts/transformer_model/**/*.safetensors
+
+# Explicit inference artifacts we DO commit:
+#   transformer_model/model.onnx        (ONNX FP32, ~45MB)
+#   transformer_model/config.json       (model metadata, <1KB)
+#   transformer_model/tokenizer/*       (~950KB)
+#   transformer_model_int8/model.onnx   (ONNX int8, ~12MB)
+#   transformer_model_int8/config.json
+#   transformer_model_int8/tokenizer.json + friends (when present)
 
 # Keep current model config, ignore backups and versioned snapshots
 !*.pkl.config.json
