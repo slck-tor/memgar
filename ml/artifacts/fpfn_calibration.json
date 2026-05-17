@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "generated_at": "2026-05-16T22:56:28Z",
+  "generated_at": "2026-05-17T12:05:44Z",
   "corpus_path": "/home/user/memgar/ml/data/calibration_corpus.json",
   "n_samples": 95,
   "n_attack": 40,
@@ -49,7 +49,7 @@
         "repo": "slcxtor/memgar",
         "last_outcome": "failure",
         "last_error": "HTTPError: HTTP Error 404: Not Found",
-        "last_attempt_at": 1778972177.2634757,
+        "last_attempt_at": 1779019535.6597576,
         "last_bundle_version": null,
         "last_pattern_count": 0,
         "used_fallback_url": true,
@@ -860,7 +860,7 @@
     "precision": null
   },
   "latency_ms": {
-    "p50": 37.12,
-    "p95": 54.28
+    "p50": 23.02,
+    "p95": 35.56
   }
 }
