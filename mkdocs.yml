@@ -1,29 +1,36 @@
 site_name: Memgar
-site_description: Memory poisoning defense for AI agents — detect, sanitize, quarantine, and block unsafe memory before it influences an agent.
-site_url: https://memgar.io/
-site_author: Memgar contributors
+site_description: Open-source memory poisoning defense for AI agents — detect, sanitize, quarantine, and block unsafe memory before it influences an agent.
+site_url: https://memgar.com/
+site_author: Memgar Foundation
 repo_name: slcxtor/memgar
 repo_url: https://github.com/slcxtor/memgar
 edit_uri: edit/main/docs/
-copyright: MIT licensed. Memgar contributors.
+copyright: MIT licensed. Built by the memgar community.
 
 theme:
   name: material
+  custom_dir: docs/overrides
   font:
     text: Inter
     code: JetBrains Mono
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   features:
     - announce.dismiss
     - content.action.edit
     - content.code.annotate
     - content.code.copy
     - content.tabs.link
+    - content.tooltips
+    - header.autohide
     - navigation.footer
     - navigation.indexes
     - navigation.instant
     - navigation.instant.prefetch
+    - navigation.path
     - navigation.sections
     - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.top
     - navigation.tracking
     - search.highlight
@@ -36,19 +43,22 @@ theme:
       primary: deep purple
       accent: deep purple
       toggle:
-        icon: material/brightness-7
+        icon: material/weather-sunny
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: deep purple
       accent: deep purple
       toggle:
-        icon: material/brightness-4
+        icon: material/weather-night
         name: Switch to light mode
   icon:
     repo: fontawesome/brands/github
     edit: material/pencil
     view: material/eye
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:
@@ -58,6 +68,13 @@ extra:
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/memgar/
       name: PyPI package
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/memgar_security
+      name: Twitter / X
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/memgar
+      name: Community Discord
+  generator: false
   status:
     new: Added recently
     deprecated: Deprecated
@@ -106,26 +123,52 @@ markdown_extensions:
 plugins:
   - search
   - glightbox
+  - blog:
+      blog_dir: blog
+      post_date_format: long
+      post_url_format: "{date}/{slug}"
+      post_excerpt: required
+      archive: false
+      categories_allowed:
+        - Releases
+        - Security
+        - Engineering
+        - Community
+  - tags
 
 nav:
   - Home: index.md
-  - Quickstart: quickstart.md
-  - Architecture:
-      - Overview: architecture/overview.md
-      - 4-Layer Pipeline: architecture/pipeline.md
-      - Threat Categories: architecture/threats.md
-      - Corpus Tiers: architecture/corpus.md
-  - Integration:
-      - Basic Usage: integration/basic.md
-      - LangChain: integration/langchain.md
-      - Configuration: integration/configuration.md
-  - Operations:
-      - Health Monitoring: operations/health.md
-      - Observability: operations/observability.md
-      - Threat Feed: operations/feed.md
-  - Development:
-      - Contributing: development/contributing.md
-      - Calibration: development/calibration.md
-      - Training Transformer: development/training.md
-  - Security: security.md
-  - Changelog: changelog.md
+  - Documentation:
+      - Quickstart: quickstart.md
+      - Architecture:
+          - Overview: architecture/overview.md
+          - 4-Layer Pipeline: architecture/pipeline.md
+          - Corpus Tiers: architecture/corpus.md
+      - Integration:
+          - Basic Usage: integration/basic.md
+          - LangChain: integration/langchain.md
+          - Configuration: integration/configuration.md
+      - Operations:
+          - Health Monitoring: operations/health.md
+          - Observability: operations/observability.md
+          - Threat Feed: operations/feed.md
+      - Development:
+          - Contributing: development/contributing.md
+          - Calibration: development/calibration.md
+          - Training Transformer: development/training.md
+  - Threats:
+      - Catalog: threats/catalog.md
+      - Categories: architecture/threats.md
+      - Memory Poisoning 101: threats/memory-poisoning-101.md
+      - Reporting a Vulnerability: security.md
+  - Resources:
+      - Cheat Sheets: resources/index.md
+      - Quickref Card: resources/quickref.md
+      - Pattern IDs: resources/pattern-ids.md
+      - Deployment Checklist: resources/deployment-checklist.md
+  - Blog:
+      - blog/index.md
+  - About:
+      - Mission: about/mission.md
+      - Roadmap: about/roadmap.md
+      - Changelog: changelog.md

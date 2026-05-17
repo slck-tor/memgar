@@ -1,11 +1,11 @@
 # Memgar
 
-[![Docs](https://img.shields.io/badge/docs-memgar.io-7e57c2)](https://memgar.io)
+[![Docs](https://img.shields.io/badge/docs-memgar.com-7e57c2)](https://memgar.com)
 [![PyPI](https://img.shields.io/pypi/v/memgar?color=7e57c2)](https://pypi.org/project/memgar/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-7e57c2)](LICENSE)
 [![CI](https://github.com/slcxtor/memgar/actions/workflows/ci.yml/badge.svg)](https://github.com/slcxtor/memgar/actions/workflows/ci.yml)
 
-Memory poisoning defense for AI agents. Full documentation at **[memgar.io](https://memgar.io)**.
+Memory poisoning defense for AI agents. Full documentation at **[memgar.com](https://memgar.com)**.
 
 Memgar helps you inspect, sanitize, quarantine, and block unsafe memory before it can influence an agent. It can run as a Python runtime guard, a FastAPI gateway in front of model providers, or an integrity vault with signed snapshots, hash baselines, diff, and rollback.
 

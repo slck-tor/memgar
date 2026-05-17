@@ -1,0 +1,178 @@
+/* Memgar brand customisation on top of mkdocs-material. */
+
+:root {
+  --md-primary-fg-color:        #5e35b1;
+  --md-primary-fg-color--light: #7e57c2;
+  --md-primary-fg-color--dark:  #4527a0;
+  --md-accent-fg-color:         #7e57c2;
+}
+
+/* Hero section on landing page */
+.memgar-hero {
+  text-align: center;
+  padding: 4rem 1rem 3rem;
+  margin: -1.5rem -1rem 2rem;
+  background: linear-gradient(
+    135deg,
+    rgba(94, 53, 177, 0.08) 0%,
+    rgba(126, 87, 194, 0.04) 50%,
+    transparent 100%
+  );
+  border-radius: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.memgar-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(126, 87, 194, 0.10) 0, transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(94, 53, 177, 0.10) 0, transparent 40%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.memgar-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.memgar-hero h1 {
+  font-size: 2.75rem;
+  line-height: 1.15;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin: 0.5rem 0 1.5rem;
+  background: linear-gradient(
+    90deg,
+    var(--md-primary-fg-color) 0%,
+    var(--md-primary-fg-color--light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.memgar-hero p {
+  font-size: 1.15rem;
+  line-height: 1.6;
+  max-width: 720px;
+  margin: 0 auto 1.5rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.memgar-hero .md-button {
+  margin: 0.4rem 0.3rem;
+}
+
+/* Stats strip */
+.memgar-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1.5rem;
+  margin: 3rem 0;
+  padding: 2rem 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+}
+
+.memgar-stat {
+  text-align: center;
+}
+
+.memgar-stat strong {
+  display: block;
+  font-size: 2.25rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 0.4rem;
+  background: linear-gradient(
+    90deg,
+    var(--md-primary-fg-color) 0%,
+    var(--md-primary-fg-color--light) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.memgar-stat span {
+  font-size: 0.875rem;
+  color: var(--md-default-fg-color--light);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Make code blocks more compact */
+.md-typeset pre > code {
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+/* Cards grid spacing */
+.md-typeset .grid.cards {
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.md-typeset .grid.cards > ul > li {
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(94, 53, 177, 0.12);
+}
+
+/* Comparison table */
+.md-typeset table {
+  font-size: 0.9rem;
+}
+
+.md-typeset table th {
+  background: var(--md-primary-fg-color);
+  color: white;
+  font-weight: 600;
+}
+
+/* Buttons */
+.md-typeset .md-button {
+  border-radius: 8px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.md-typeset .md-button--primary {
+  background: var(--md-primary-fg-color);
+  border-color: var(--md-primary-fg-color);
+}
+
+.md-typeset .md-button--primary:hover {
+  background: var(--md-primary-fg-color--dark);
+  border-color: var(--md-primary-fg-color--dark);
+}
+
+/* Mermaid diagrams */
+.mermaid {
+  text-align: center;
+}
+
+/* Mobile tweaks */
+@media (max-width: 768px) {
+  .memgar-hero {
+    padding: 2.5rem 1rem 2rem;
+  }
+  .memgar-hero h1 {
+    font-size: 2rem;
+  }
+  .memgar-hero p {
+    font-size: 1rem;
+  }
+  .memgar-stat strong {
+    font-size: 1.75rem;
+  }
+}
