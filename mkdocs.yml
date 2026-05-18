@@ -152,6 +152,7 @@ nav:
           - Health Monitoring: operations/health.md
           - Observability: operations/observability.md
           - Threat Feed: operations/feed.md
+          - Threat Feed Pipeline: operations/threat-feed-pipeline.md
           - Memory Forensics: operations/forensics.md
       - Development:
           - Contributing: development/contributing.md
