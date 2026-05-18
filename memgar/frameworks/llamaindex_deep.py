@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional
 
 from memgar.analyzer import Analyzer
 from memgar.models import AnalysisResult, Decision, MemoryEntry
@@ -36,20 +36,20 @@ logger = logging.getLogger(__name__)
 # Optional LlamaIndex import
 # ---------------------------------------------------------------------------
 try:
-    from llama_index.core.query_engine import BaseQueryEngine
-    from llama_index.core.retrievers import BaseRetriever
+    from llama_index.core.indices.base import BaseIndex
+    from llama_index.core.ingestion import IngestionPipeline
     from llama_index.core.postprocessor.types import BaseNodePostprocessor
+    from llama_index.core.query_engine import BaseQueryEngine
+    from llama_index.core.response.schema import RESPONSE_TYPE, Response
+    from llama_index.core.retrievers import BaseRetriever
     from llama_index.core.schema import (
+        BaseNode,
         NodeWithScore,
         QueryBundle,
         TextNode,
-        BaseNode,
+        TransformComponent,
     )
-    from llama_index.core.response.schema import RESPONSE_TYPE, Response
-    from llama_index.core.indices.base import BaseIndex
     from llama_index.core.storage.storage_context import StorageContext
-    from llama_index.core.ingestion import IngestionPipeline
-    from llama_index.core.schema import TransformComponent
 
     LLAMAINDEX_AVAILABLE = True
 except ImportError:

@@ -79,9 +79,9 @@ from typing import Any, Dict, List, Optional
 try:
     from .confidence_bypass_detector import (
         ConfidenceBypassDetector,
-        PolicyDatabase,
-        MigrationDatabase,
         EntityDatabase,
+        MigrationDatabase,
+        PolicyDatabase,
     )
     CONFIDENCE_BYPASS_AVAILABLE = True
 except ImportError:

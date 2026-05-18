@@ -36,12 +36,12 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import (
     Dict,
-    FrozenSet,
     Generator,
     Iterable,
     List,
@@ -50,11 +50,6 @@ from typing import (
     Tuple,
     Union,
 )
-import re
-import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
-
 
 # =============================================================================
 # DATA STRUCTURES

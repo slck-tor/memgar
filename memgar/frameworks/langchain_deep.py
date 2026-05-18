@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 from memgar.analyzer import Analyzer
 from memgar.models import AnalysisResult, Decision, MemoryEntry
@@ -44,18 +44,18 @@ logger = logging.getLogger(__name__)
 # Optional LangChain import
 # ---------------------------------------------------------------------------
 try:
-    from langchain_core.runnables import Runnable, RunnableConfig
+    from langchain_core.callbacks import CallbackManagerForRetrieverRun
+    from langchain_core.chat_history import BaseChatMessageHistory
+    from langchain_core.documents import Document
+    from langchain_core.memory import BaseMemory
     from langchain_core.messages import (
+        AIMessage,
         BaseMessage,
         HumanMessage,
-        AIMessage,
         SystemMessage,
     )
-    from langchain_core.chat_history import BaseChatMessageHistory
-    from langchain_core.memory import BaseMemory
-    from langchain_core.documents import Document
     from langchain_core.retrievers import BaseRetriever
-    from langchain_core.callbacks import CallbackManagerForRetrieverRun
+    from langchain_core.runnables import Runnable, RunnableConfig
 
     LANGCHAIN_AVAILABLE = True
 except ImportError:  # pragma: no cover

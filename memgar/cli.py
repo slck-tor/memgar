@@ -25,19 +25,18 @@ from pathlib import Path
 from typing import Optional
 
 import click
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
-from rich import box
 
 from memgar import __version__
 from memgar.analyzer import Analyzer
 from memgar.models import Decision, Severity
-from memgar.patterns import PATTERNS, get_patterns_by_severity, pattern_stats
+from memgar.patterns import PATTERNS, pattern_stats
 from memgar.scanner import Scanner
-
 
 console = Console()
 logger = logging.getLogger("memgar.cli")
@@ -799,7 +798,7 @@ def guard(content: Optional[str], file: Optional[str], source: str, session: Opt
         memgar guard --file message.txt --source email
         memgar guard "User prefers dark mode" --session user_123
     """
-    from memgar.memory_guard import MemoryGuard, GuardDecision
+    from memgar.memory_guard import GuardDecision, MemoryGuard
     from memgar.provenance import SourceType
     
     # Get content
@@ -1144,8 +1143,9 @@ def benchmark(samples: int, include_semantic: bool, include_guard: bool) -> None
         memgar benchmark --samples 500
         memgar benchmark --include-semantic --include-guard
     """
-    import time
     import random
+    import time
+
     from memgar.analyzer import Analyzer
     from memgar.models import MemoryEntry
     
@@ -1308,9 +1308,8 @@ def server(host: str, port: int, mode: str) -> None:
 
     elif mode == "sse":
         # HTTP + SSE server using built-in http.server
-        import threading
-        from http.server import HTTPServer, BaseHTTPRequestHandler
         import json as _json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
 
         mcp_server = MemgarMCPServer()
 
@@ -2747,9 +2746,15 @@ def approve(action, detail, risk, timeout, session, slack, telegram_token,
             --telegram-token BOT_TOKEN --telegram-chat CHAT_ID
     """
     from memgar.hitl import (
-        HITLCheckpoint, SlackNotifier, TelegramNotifier,
-        WebhookNotifier, CLINotifier, classify_action, RiskLevel,
-        HITLDeniedError, HITLTimeoutError,
+        CLINotifier,
+        HITLCheckpoint,
+        HITLDeniedError,
+        HITLTimeoutError,
+        RiskLevel,
+        SlackNotifier,
+        TelegramNotifier,
+        WebhookNotifier,
+        classify_action,
     )
     details = {}
     for d in detail:
@@ -2839,8 +2844,7 @@ def server(host, port, mode):
         except KeyboardInterrupt:
             console.print("\n[yellow]Server stopped.[/yellow]")
     else:
-        import threading
-        from http.server import HTTPServer, BaseHTTPRequestHandler
+        from http.server import BaseHTTPRequestHandler, HTTPServer
         mcp_srv = MemgarMCPServer()
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *a): pass
@@ -3201,7 +3205,7 @@ def supply_scan(path, output, no_typo, no_unpinned, min_severity, output_json):
         memgar supply scan ./ --output supply_report.json
         memgar supply scan ./ --no-typo --min-severity high
     """
-    from memgar.supply import SupplyChainScanner, FindingSeverity
+    from memgar.supply import SupplyChainScanner
 
     scanner = SupplyChainScanner(
         check_typosquatting=not no_typo,
@@ -3402,7 +3406,7 @@ def identity_register(name, scopes, owner, description, ttl, expires_days, store
             --scope read_finances --scope write_finances \\
             --ttl 60 --expires-days 90
     """
-    from memgar.identity import PermissionScope, AgentRegistry
+    from memgar.identity import PermissionScope
     registry = _get_reg(store)
 
     # Parse scopes
@@ -3458,7 +3462,7 @@ def identity_register(name, scopes, owner, description, ttl, expires_days, store
 @click.option("--json", "output_json", is_flag=True)
 def identity_list(store, status, owner, output_json):
     """List all registered agent identities."""
-    from memgar.identity import AgentRegistry, AgentStatus
+    from memgar.identity import AgentStatus
     if not Path(store).exists():
         console.print(f"[dim]No registry at {store}[/dim]"); return
     registry = _get_reg(store)
@@ -3507,7 +3511,7 @@ def identity_token(agent_id, principal, scopes, ttl, store, output_json):
         memgar identity token agt_abc123 --principal alice@corp.com
         memgar identity token agt_abc123 --scope scan_content --ttl 60
     """
-    from memgar.identity import PermissionScope, AgentRegistry
+    from memgar.identity import PermissionScope
     registry = _get_reg(store)
     parsed_scopes = None
     if scopes:
@@ -3546,7 +3550,7 @@ def identity_token(agent_id, principal, scopes, ttl, store, output_json):
 @click.option("--json", "output_json", is_flag=True)
 def identity_verify(token_string, scope, store, output_json):
     """Verify a token (and optionally check required scope)."""
-    from memgar.identity import PermissionScope, AgentRegistry
+    from memgar.identity import PermissionScope
     registry = _get_reg(store)
     required = PermissionScope(scope.lower()) if scope else None
     try:
@@ -3587,7 +3591,6 @@ def identity_revoke(agent_id, reason, token_jti, by, store):
 
     Revoking a token (--token-jti) only invalidates that one token.
     """
-    from memgar.identity import AgentRegistry
     registry = _get_reg(store)
     if token_jti:
         registry.revoke_token(token_jti)
@@ -3619,7 +3622,6 @@ def identity_audit(agent_id, limit, store, output_json, verify_chain):
         memgar identity audit --agent-id agt_abc123 --limit 50
         memgar identity audit --verify-chain
     """
-    from memgar.identity import AgentRegistry
     if not Path(store).exists():
         console.print(f"[dim]No registry at {store}[/dim]"); return
     registry = _get_reg(store)
@@ -3658,7 +3660,6 @@ def identity_audit(agent_id, limit, store, output_json, verify_chain):
 @click.option("--json", "output_json", is_flag=True)
 def identity_status(store, output_json):
     """Show registry statistics."""
-    from memgar.identity import AgentRegistry
     if not Path(store).exists():
         console.print(f"[dim]No registry at {store}[/dim]"); return
     registry = _get_reg(store)
@@ -3681,7 +3682,7 @@ def identity_status(store, output_json):
 @identity.command("scopes")
 def identity_scopes():
     """List all available permission scopes."""
-    from memgar.identity import PermissionScope, HIGH_RISK_SCOPES
+    from memgar.identity import HIGH_RISK_SCOPES, PermissionScope
     console.print()
     tbl = Table(box=box.SIMPLE, show_header=True, title="Available Permission Scopes")
     tbl.add_column("Scope", style="cyan", width=22)
@@ -3743,7 +3744,15 @@ def siem() -> None:
 def _build_router_from_opts(splunk_url, splunk_token, datadog_key, datadog_site,
                               elastic_url, elastic_key, syslog_host, syslog_port,
                               syslog_proto, webhook, log_file, min_severity):
-    from memgar.siem import SIEMRouter, SplunkHECSink, DatadogSink, ElasticSink, SyslogSink, WebhookSink, FileSink
+    from memgar.siem import (
+        DatadogSink,
+        ElasticSink,
+        FileSink,
+        SIEMRouter,
+        SplunkHECSink,
+        SyslogSink,
+        WebhookSink,
+    )
     router = SIEMRouter(min_severity=min_severity, async_mode=False)
     if splunk_url or os.environ.get("MEMGAR_SPLUNK_HEC_URL"):
         router.add_sink(SplunkHECSink(url=splunk_url, token=splunk_token))
@@ -3762,7 +3771,6 @@ def _build_router_from_opts(splunk_url, splunk_token, datadog_key, datadog_site,
 
 def _siem_options(fn):
     """Shared SIEM connection options decorator."""
-    import functools
     for opt in reversed([
         click.option("--splunk-url", default=None, help="Splunk HEC URL"),
         click.option("--splunk-token", default=None, help="Splunk HEC token"),
@@ -3797,7 +3805,7 @@ def siem_test(splunk_url, splunk_token, datadog_key, datadog_site, elastic_url,
         memgar siem test --datadog-key DD_API_KEY
         memgar siem test --syslog-host 192.168.1.100 --syslog-proto tcp
     """
-    from memgar.siem import EventCategory, SIEMEvent
+    from memgar.siem import SIEMEvent
 
     router = _build_router_from_opts(
         splunk_url, splunk_token, datadog_key, datadog_site,
@@ -3982,7 +3990,7 @@ def siem_convert(input_path, fmt, output):
         memgar siem convert ./threat_event.json --format ocsf
         memgar siem convert ./report.json --format cef --output events.cef
     """
-    from memgar.siem import SIEMEvent, EventCategory
+    from memgar.siem import EventCategory, SIEMEvent
     data = json.loads(Path(input_path).read_text())
 
     # Try to parse as a single SIEMEvent or list
@@ -4144,7 +4152,7 @@ def eu_ai_act_report(system_name, provider, sys_version, purpose, risk_class,
             --output compliance_report.html
         memgar eu-ai-act -n "Doc Processor" -p "LegalCo" --format json -o report.json
     """
-    from memgar.eu_ai_act import EUAIActReporter, ComplianceConfig
+    from memgar.eu_ai_act import ComplianceConfig, EUAIActReporter
 
     cfg = ComplianceConfig(
         system_name        = system_name,
@@ -4246,8 +4254,9 @@ def baseline_train(log_path, store, agent_id, alpha, output_json):
         memgar baseline train ./siem_events.jsonl
         memgar baseline train ./memgar_audit.json --agent-id agt_abc
     """
-    from memgar.behavioral_baseline import BehavioralBaseline, BaselineIntegration
     import json as _json
+
+    from memgar.behavioral_baseline import BaselineIntegration, BehavioralBaseline
 
     bl = BehavioralBaseline(agent_id=agent_id, alpha=alpha)
     hooks = BaselineIntegration(bl)

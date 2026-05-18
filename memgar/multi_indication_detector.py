@@ -13,7 +13,6 @@ This detector specifically targets sequence-based indication attacks.
 """
 
 import re
-from typing import List, Dict, Set
 from dataclasses import dataclass
 from enum import Enum
 

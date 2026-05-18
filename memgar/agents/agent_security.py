@@ -35,16 +35,16 @@ Usage:
     threats = guard.detect_swarm_attacks()
 """
 
-from typing import Optional, Dict, List, Set, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
-from .agent_validator import AgentMessageValidator, MessageValidationResult, AgentThreat
-from .trust_chain import TrustChainManager, TrustLevel, TrustRelationship
-from .delegation_monitor import DelegationMonitor, DelegationEvent
-from .swarm_detector import SwarmDetector, SwarmThreat
+from .agent_validator import AgentMessageValidator, MessageValidationResult
+from .delegation_monitor import DelegationEvent, DelegationMonitor
 from .mcp_security import MCPSecurityLayer, MCPValidationResult
+from .swarm_detector import SwarmDetector, SwarmThreat
+from .trust_chain import TrustChainManager, TrustLevel
 
 
 class SecurityAction(Enum):

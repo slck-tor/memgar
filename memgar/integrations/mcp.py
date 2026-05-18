@@ -22,12 +22,11 @@ Example:
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Awaitable
 from datetime import datetime
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from memgar.analyzer import Analyzer
-from memgar.models import AnalysisResult, Decision, MemoryEntry, Severity
-
+from memgar.models import AnalysisResult, Decision, MemoryEntry
 
 F = TypeVar("F", bound=Callable[..., Any])
 

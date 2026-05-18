@@ -25,12 +25,12 @@ Usage:
         print(f"Blocked: {result.threats}")
 """
 
-import re
 import hashlib
-from typing import Optional, Dict, List, Any, Set
+import re
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
 
 class AgentThreatType(Enum):
@@ -572,7 +572,7 @@ class AgentMessageValidator:
         threats = []
         
         try:
-            from ..models import MemoryEntry, Decision
+            from ..models import Decision, MemoryEntry
             entry = MemoryEntry(content=message)
             result = self.text_analyzer.analyze(entry)
             
@@ -740,7 +740,9 @@ class AgentMessageValidator:
         Returns:
             MessageValidationResult with is_valid=False if threats detected
         """
-        import time, re, hashlib
+        import hashlib
+        import re
+        import time
         start = time.time()
         threats = []
         recommendations = []

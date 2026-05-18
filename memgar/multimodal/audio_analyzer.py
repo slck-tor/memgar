@@ -16,13 +16,13 @@ Dependencies (optional):
 - librosa: Audio analysis
 """
 
+import base64
 import io
 import re
 import struct
-import base64
-from typing import Optional, Dict, List, Any, Union, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # Optional imports
 try:
@@ -591,7 +591,7 @@ class AudioAnalyzer:
                 # Use Memgar analyzer
                 if self.text_analyzer and len(text) > 20:
                     try:
-                        from ..models import MemoryEntry, Decision
+                        from ..models import Decision, MemoryEntry
                         entry = MemoryEntry(content=text)
                         analysis = self.text_analyzer.analyze(entry)
                         

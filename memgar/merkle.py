@@ -34,8 +34,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Tuple
-
+from typing import Iterable, List, Optional, Tuple
 
 LEAF_PREFIX = b"L:"
 INTERNAL_PREFIX = b"I:"

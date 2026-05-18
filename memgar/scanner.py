@@ -14,7 +14,6 @@ Supports:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import time
 from pathlib import Path
@@ -26,7 +25,6 @@ from memgar.models import (
     Decision,
     MemoryEntry,
     ScanResult,
-    ThreatMatch,
 )
 
 
@@ -466,7 +464,8 @@ class MemoryScanner:
             AnalysisResult with .decision, .risk_score, .threats
         """
         if not content or not isinstance(content, str):
-            from memgar.models import Decision, AnalysisResult as AR
+            from memgar.models import AnalysisResult as AR
+            from memgar.models import Decision
             return AR(decision=Decision.ALLOW, risk_score=0, threats=[])
 
         entry = MemoryEntry(content=content)
@@ -484,8 +483,9 @@ class MemoryScanner:
             result = replace(result, threat_type=threat_cat)
 
         if self.mode == "audit":
-            from memgar.models import Decision
             from dataclasses import replace
+
+            from memgar.models import Decision
             return replace(result, decision=Decision.ALLOW)
 
         return result

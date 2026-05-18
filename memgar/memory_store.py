@@ -46,12 +46,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import List, NamedTuple
 
 from memgar.models import MemoryEntry
 

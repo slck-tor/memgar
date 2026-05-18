@@ -73,8 +73,6 @@ Usage — auto_protect integration::
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import hmac
 import json
 import logging
@@ -83,7 +81,7 @@ import secrets
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from functools import wraps

@@ -21,11 +21,10 @@ Usage:
         allow_action()
 """
 
-from typing import Optional, Dict, List, Set, Any, Tuple
 from dataclasses import dataclass, field
-from enum import Enum, auto
 from datetime import datetime, timedelta
-import hashlib
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 class TrustLevel(Enum):

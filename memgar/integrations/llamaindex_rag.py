@@ -33,17 +33,17 @@ Example:
 
 import logging
 from dataclasses import replace
-from typing import List, Dict, Optional, Any, Callable
 from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 # Import base classes (handle if LlamaIndex not installed)
 try:
+    from llama_index.core.callbacks import CallbackManager
+    from llama_index.core.postprocessor import BaseNodePostprocessor
     from llama_index.core.retrievers import BaseRetriever
     from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
-    from llama_index.core.postprocessor import BaseNodePostprocessor
-    from llama_index.core.callbacks import CallbackManager
     LLAMAINDEX_AVAILABLE = True
 except ImportError:
     LLAMAINDEX_AVAILABLE = False
@@ -55,11 +55,9 @@ except ImportError:
     CallbackManager = Any
 
 from ..retriever import (
-    TrustAwareRetriever,
     RetrievalMetadata,
-    RetrievalResult,
     RetrievedDocument,
-    DecayFunction,
+    TrustAwareRetriever,
 )
 from .universal import UniversalMemoryGuard
 

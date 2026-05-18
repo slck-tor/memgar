@@ -6,8 +6,8 @@ Production test'te kaçan saldırılar için yeni pattern'ler.
 Memgar'ın mevcut pattern database'ine ekleme yapar.
 """
 
-from typing import List, Dict
 import re
+from typing import Dict, List
 
 # =============================================================================
 # MISSED PROMPT INJECTION PATTERNS

@@ -89,7 +89,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -693,8 +692,8 @@ Content to evaluate:
             )
 
     def _call_llm(self, content: str) -> CheckResult:
-        import urllib.request
         import ssl
+        import urllib.request
 
         truncated = content[:800]
         payload = {

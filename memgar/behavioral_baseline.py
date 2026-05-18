@@ -652,7 +652,8 @@ class BehavioralBaseline:
 
         def _run() -> None:
             try:
-                import importlib.util, os
+                import importlib.util
+                import os
                 forensics_file = os.path.join(
                     os.path.dirname(__file__), "forensics"
                 )

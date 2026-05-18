@@ -21,11 +21,11 @@ Solution:
 Innovation: Block innocent-looking queries that establish attack context.
 """
 
+import re
 import time
-from typing import List, Dict, Set, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-import re
+from typing import Dict, List, Set, Tuple
 
 
 class QueryType(str, Enum):

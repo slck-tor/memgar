@@ -15,16 +15,15 @@ Every memory entry is tagged with:
 Based on Christian Schneider's defense architecture (Layer 2).
 """
 
-import json
-import time
 import hashlib
-import uuid
+import json
 import logging
+import uuid
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Union
-from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

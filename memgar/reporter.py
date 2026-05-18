@@ -16,12 +16,11 @@ Usage:
 """
 
 import json
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Optional
 
-from .models import AnalysisResult, Decision, BatchResult
+from .models import AnalysisResult, Decision
 
 
 @dataclass

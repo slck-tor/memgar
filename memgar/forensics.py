@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import sqlite3
 import time
@@ -38,10 +37,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional
 
 from memgar.analyzer import Analyzer
-from memgar.models import AnalysisResult, Decision, MemoryEntry, Severity
+from memgar.models import AnalysisResult, Decision, MemoryEntry
 
 
 def _safe_table_name(name: str) -> str:

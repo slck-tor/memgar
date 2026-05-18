@@ -17,7 +17,7 @@ import math
 import threading
 import time
 from collections import deque
-from typing import List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from memgar.siem import SIEMRouter

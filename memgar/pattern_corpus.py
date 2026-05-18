@@ -17,10 +17,9 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Optional
 
-from memgar.models import AnalysisResult, Decision, MemoryEntry, Severity, Threat
-
+from memgar.models import AnalysisResult, Decision, MemoryEntry, Threat
 
 REQUIRED_ATTACK_VECTORS: tuple[str, ...] = (
     "memory_overwrite",

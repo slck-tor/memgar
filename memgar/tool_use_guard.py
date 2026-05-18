@@ -36,7 +36,6 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from .canary import extract_canaries
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

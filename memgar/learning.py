@@ -71,14 +71,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Enums & Models
@@ -843,7 +841,7 @@ class PatternLearner:
 
         Returns count of patterns applied.
         """
-        from memgar.models import Threat, ThreatCategory, Severity
+        from memgar.models import Severity, Threat, ThreatCategory
 
         already_applied = {
             getattr(p, "id", "") for p in getattr(analyzer, "patterns", [])

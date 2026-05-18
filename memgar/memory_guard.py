@@ -29,20 +29,20 @@ Example:
 """
 
 import logging
-from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
-from .sanitizer import InstructionSanitizer, SanitizeResult, SanitizeAction
-from .provenance import (
-    ProvenanceTracker,
-    TrackedMemoryEntry,
-    SourceType,
-    TrustLevel,
-    ForensicAnalyzer,
-)
 from .analyzer import Analyzer
 from .models import Decision, MemoryEntry
+from .provenance import (
+    ForensicAnalyzer,
+    ProvenanceTracker,
+    SourceType,
+    TrackedMemoryEntry,
+    TrustLevel,
+)
+from .sanitizer import InstructionSanitizer, SanitizeAction, SanitizeResult
 
 logger = logging.getLogger(__name__)
 

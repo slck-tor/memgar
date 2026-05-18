@@ -1,0 +1,74 @@
+name: Lint & Security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "memgar/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/lint.yml"
+  pull_request:
+    paths:
+      - "memgar/**"
+      - "tests/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - ".github/workflows/lint.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: Ruff (lint + import sort)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      # Hard-fail on I001 (import-sort) — fully auto-fixable, no excuse to break it.
+      # F401 (unused-import) is reported but not blocking: many F401 sites in
+      # memgar are intentional availability-probe try/import/return patterns.
+      - name: Ruff check (I001, blocking)
+        run: ruff check memgar/ --select I001 --output-format=github
+
+      - name: Ruff full report (non-blocking)
+        if: always()
+        run: ruff check memgar/ --output-format=github --exit-zero
+
+  bandit:
+    name: Bandit (security scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install bandit
+        run: pip install "bandit[toml]"
+
+      # Block merge on HIGH severity + HIGH confidence findings only.
+      # `bandit -lll -iii` is the documented way to set both filters.
+      - name: Bandit (high/high, blocking)
+        run: bandit -r memgar/ -lll -iii
+
+      - name: Bandit (full report, non-blocking)
+        if: always()
+        run: bandit -r memgar/ -l --exit-zero

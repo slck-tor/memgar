@@ -11,12 +11,14 @@ This layer addresses the critical gaps identified in production testing.
 """
 
 import sys
+
 sys.path.append('/home/claude/test_env')
 
-from ehr_attack_detector import EHRAttackDetector, EHRThreat
-from multi_indication_detector import MultiIndicationDetector, IndicationThreat
 from dataclasses import dataclass
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+from ehr_attack_detector import EHRAttackDetector, EHRThreat
+from multi_indication_detector import IndicationThreat, MultiIndicationDetector
 
 
 @dataclass

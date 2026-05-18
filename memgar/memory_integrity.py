@@ -32,9 +32,8 @@ import logging
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from dataclasses import asdict, dataclass, field
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

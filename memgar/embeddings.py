@@ -7,12 +7,9 @@ Semantic similarity analysis using sentence embeddings.
 Uses sentence-transformers for local, offline threat detection.
 """
 
-import os
-import json
 import logging
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +401,6 @@ class EmbeddingAnalyzer:
     
     def _compute_threat_embeddings(self):
         """Pre-compute embeddings for all threat examples."""
-        import numpy as np
         
         examples = [ex for _, ex in self._examples_flat]
         logger.info(f"Computing embeddings for {len(examples)} threat examples...")

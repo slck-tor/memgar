@@ -65,8 +65,8 @@ def start_metrics_server(
 
         # Stamp the model version info metric.
         try:
-            from memgar.observability.metrics import MODEL_VERSION_INFO
             from memgar import __version__ as _app_version
+            from memgar.observability.metrics import MODEL_VERSION_INFO
             if MODEL_VERSION_INFO is not None:
                 MODEL_VERSION_INFO.labels(version=_app_version).set(1)
         except Exception:
@@ -89,4 +89,5 @@ def get_metrics_registry() -> "Any":  # type: ignore[name-defined]
 
 
 from typing import Any  # noqa: E402
+
 from memgar.observability.drift_monitor import DriftMonitor  # noqa: E402, F401

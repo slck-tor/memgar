@@ -22,14 +22,13 @@ Usage:
     result = analyzer.analyze_audio(audio_bytes)
 """
 
-import mimetypes
-from typing import Optional, Dict, List, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
-from .image_analyzer import ImageAnalyzer, ImageAnalysisResult
-from .pdf_analyzer import PDFAnalyzer, PDFAnalysisResult
-from .audio_analyzer import AudioAnalyzer, AudioAnalysisResult
+from .audio_analyzer import AudioAnalysisResult, AudioAnalyzer
+from .image_analyzer import ImageAnalysisResult, ImageAnalyzer
+from .pdf_analyzer import PDFAnalysisResult, PDFAnalyzer
 
 
 class ContentType(Enum):

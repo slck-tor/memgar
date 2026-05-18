@@ -13,12 +13,11 @@ Instead of binary BLOCK/ALLOW, sanitizer can:
 Based on Christian Schneider's defense architecture (Layer 2).
 """
 
-import re
-import hashlib
 import logging
-from typing import List, Dict, Optional, Tuple, Set
+import re
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

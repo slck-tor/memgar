@@ -43,97 +43,97 @@ __email__ = "hello@memgar.com"
 # =============================================================================
 # CORE MODELS (Always available)
 # =============================================================================
-from memgar.models import (
-    AnalysisResult,
-    ScanResult,
-    Threat,
-    ThreatMatch,
-    Severity,
-    Decision,
-    ThreatCategory,
-    MemoryEntry,
-)
-
 # =============================================================================
 # CORE ANALYSIS (Always available)
 # =============================================================================
 from memgar.analyzer import Analyzer, QuickAnalyzer
-from memgar.scanner import Scanner
-from memgar.patterns import PATTERNS, get_patterns_by_severity, get_pattern_by_id, pattern_stats
+
+# =============================================================================
+# MEMORY AUDITOR (Always available)
+# =============================================================================
+from memgar.auditor import (
+    AuditEvent,
+    AuditEventType,
+    IntegrityReport,
+    MemoryAuditor,
+    Snapshot,
+)
+
+# =============================================================================
+# CIRCUIT BREAKER (Always available)
+# =============================================================================
+from memgar.circuit_breaker import (
+    AgentHaltedException,
+    CircuitBreaker,
+    CircuitBreakerStats,
+    CircuitState,
+    MultiCircuitBreaker,
+    ThreatEvent,
+)
 from memgar.config import MemgarConfig
-
-# =============================================================================
-# LAYER 2: SANITIZATION (Always available)
-# =============================================================================
-from memgar.sanitizer import (
-    InstructionSanitizer,
-    SanitizeResult,
-    SanitizeAction,
-)
-
-# =============================================================================
-# LAYER 2: PROVENANCE (Always available)
-# =============================================================================
-from memgar.provenance import (
-    ProvenanceTracker,
-    TrackedMemoryEntry,
-    MemoryProvenance,
-    SourceType,
-    TrustLevel,
-    SourceInfo,
-    ForensicAnalyzer,
-)
 
 # =============================================================================
 # LAYER 2: MEMORY GUARD (Always available)
 # =============================================================================
 from memgar.memory_guard import (
-    MemoryGuard,
-    GuardResult,
     GuardDecision,
+    GuardResult,
+    MemoryGuard,
 )
+from memgar.models import (
+    AnalysisResult,
+    Decision,
+    MemoryEntry,
+    ScanResult,
+    Severity,
+    Threat,
+    ThreatCategory,
+    ThreatMatch,
+)
+from memgar.patterns import PATTERNS, get_pattern_by_id, get_patterns_by_severity, pattern_stats
 
 # =============================================================================
-# LAYER 3: TRUST-AWARE RETRIEVAL (Always available)
+# LAYER 2: PROVENANCE (Always available)
 # =============================================================================
-from memgar.retriever import (
-    TrustAwareRetriever,
-    RetrievalMetadata,
-    RetrievalResult,
-    RetrievedDocument,
-    TemporalDecay,
-    DecayFunction,
-    RetrievalAnomalyDetector,
-    AnomalyEvent,
+from memgar.provenance import (
+    ForensicAnalyzer,
+    MemoryProvenance,
+    ProvenanceTracker,
+    SourceInfo,
+    SourceType,
+    TrackedMemoryEntry,
+    TrustLevel,
 )
 
 # =============================================================================
 # LAYER 4: MONITORING (Always available)
 # =============================================================================
 from memgar.reporter import HTMLReporter
-from memgar.watcher import MemoryWatcher
+
 # =============================================================================
-# CIRCUIT BREAKER (Always available)
+# LAYER 3: TRUST-AWARE RETRIEVAL (Always available)
 # =============================================================================
-from memgar.circuit_breaker import (
-    CircuitBreaker,
-    CircuitState,
-    ThreatEvent,
-    CircuitBreakerStats,
-    AgentHaltedException,
-    MultiCircuitBreaker,
+from memgar.retriever import (
+    AnomalyEvent,
+    DecayFunction,
+    RetrievalAnomalyDetector,
+    RetrievalMetadata,
+    RetrievalResult,
+    RetrievedDocument,
+    TemporalDecay,
+    TrustAwareRetriever,
 )
 
 # =============================================================================
-# MEMORY AUDITOR (Always available)
+# LAYER 2: SANITIZATION (Always available)
 # =============================================================================
-from memgar.auditor import (
-    MemoryAuditor,
-    AuditEventType,
-    AuditEvent,
-    Snapshot,
-    IntegrityReport,
+from memgar.sanitizer import (
+    InstructionSanitizer,
+    SanitizeAction,
+    SanitizeResult,
 )
+from memgar.scanner import Scanner
+from memgar.watcher import MemoryWatcher
 
 # =============================================================================
 # SEMANTIC ANALYSIS (Optional - requires sentence-transformers)
@@ -144,11 +144,11 @@ EmbeddingAnalyzer = None
 
 try:
     from memgar.semantic import (
+        AnalysisLayer,
         SemanticAnalyzer,
         SemanticResult,
-        AnalysisLayer,
-        quick_analyze,
         check_available_layers,
+        quick_analyze,
     )
     SEMANTIC_AVAILABLE = True
 except ImportError:
@@ -156,9 +156,9 @@ except ImportError:
 
 try:
     from memgar.embeddings import (
+        THREAT_EXAMPLES,
         EmbeddingAnalyzer,
         EmbeddingResult,
-        THREAT_EXAMPLES,
     )
 except ImportError:
     pass
@@ -185,10 +185,10 @@ MULTIMODAL_AVAILABLE = False
 
 try:
     from memgar.multimodal import (
-        MultiModalAnalyzer,
-        ImageAnalyzer,
-        PDFAnalyzer,
         AudioAnalyzer,
+        ImageAnalyzer,
+        MultiModalAnalyzer,
+        PDFAnalyzer,
     )
     MULTIMODAL_AVAILABLE = True
 except ImportError:
@@ -201,16 +201,18 @@ except ImportError:
 # MULTI-AGENT SECURITY (Always available)
 # =============================================================================
 from memgar.agents import (
-    AgentSecurityGuard,
     AgentMessageValidator,
-    TrustChainManager,
-    TrustLevel as AgentTrustLevel,
-    DelegationMonitor,
+    AgentSecurityGuard,
     DelegationEvent,
-    SwarmDetector,
-    SwarmThreat,
+    DelegationMonitor,
     MCPSecurityLayer,
     MCPValidationResult,
+    SwarmDetector,
+    SwarmThreat,
+    TrustChainManager,
+)
+from memgar.agents import (
+    TrustLevel as AgentTrustLevel,
 )
 
 # =============================================================================
@@ -225,19 +227,19 @@ from memgar.core import (
 # Denial of Wallet detection (v0.5.2)
 try:
     from memgar.dow import (
+        DoWAnalysisResult,
+        DoWAttackDetected,
+        DoWBudgetExhaustedError,
         DoWDetector,
         DoWGuard,
-        DoWRateLimiter,
-        DoWSessionMonitor,
-        DoWAnalysisResult,
         DoWMatch,
+        DoWRateLimiter,
         DoWRisk,
-        DoWTrigger,
-        DoWAttackDetected,
+        DoWSessionMonitor,
         DoWThrottleError,
-        DoWBudgetExhaustedError,
-        SessionBudgetStats,
+        DoWTrigger,
         RateLimitStatus,
+        SessionBudgetStats,
         create_dow_guard,
     )
     _DOW_AVAILABLE = True
@@ -247,12 +249,12 @@ except ImportError:
 # Memory Forensics (v0.5.1)
 try:
     from memgar.forensics import (
-        MemoryForensicsEngine,
-        ForensicReport,
         ForensicEntry,
+        ForensicReport,
+        MemoryCleanser,
+        MemoryForensicsEngine,
         PoisonEvent,
         PoisonSeverity,
-        MemoryCleanser,
         SkillFileScanner,
     )
     _FORENSICS_AVAILABLE = True
@@ -262,19 +264,19 @@ except ImportError:
 # Framework deep integrations (v0.5.0)
 try:
     from memgar.frameworks import (
-        MemgarSecurityRunnable,
         MemgarChatMemory,
         MemgarConversationBufferMemory,
-        SecureVectorStoreRetriever,
-        MemgarLCELMiddleware,
         MemgarDocumentFilter,
-        create_secure_lcel_chain,
-        MemgarQueryEngineSecurity,
         MemgarIndexSecurity,
+        MemgarIngestionPipelineSecurity,
+        MemgarLCELMiddleware,
+        MemgarNodeFilter,
+        MemgarQueryEngineSecurity,
+        MemgarSecurityRunnable,
         MemgarStorageContextSecurity,
         SecureVectorIndexRetriever,
-        MemgarIngestionPipelineSecurity,
-        MemgarNodeFilter,
+        SecureVectorStoreRetriever,
+        create_secure_lcel_chain,
         create_secure_query_pipeline,
     )
     _FRAMEWORKS_AVAILABLE = True
@@ -284,12 +286,13 @@ except ImportError:
 
 # Auto-protect (v0.5.3)
 from memgar.auto_protect import (
-    auto_protect,
-    auto_protect_off,
-    get_status as auto_protect_status,
     AutoProtectConfig,
     AutoProtectStatus,
-    reset_stats as auto_protect_reset_stats,
+    auto_protect,
+    auto_protect_off,
+)
+from memgar.auto_protect import (
+    get_status as auto_protect_status,
 )
 
 # =============================================================================

@@ -164,10 +164,10 @@ def configure_tracing(
         )
 
     try:
-        from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.sdk.trace.sampling import TraceIdRatioBased, ALWAYS_ON
+        from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
     except ImportError as exc:
         raise ImportError(
             "opentelemetry-sdk is required. "

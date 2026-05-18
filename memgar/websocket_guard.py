@@ -64,8 +64,6 @@ Usage — auto_protect() integration::
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import re
 import threading
@@ -74,7 +72,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from memgar.analyzer import Analyzer
 from memgar.models import Decision, MemoryEntry

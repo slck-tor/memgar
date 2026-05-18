@@ -7,8 +7,8 @@ Her saldırı GERÇEK dünyadan ilham alır.
 """
 
 from dataclasses import dataclass, field
-from typing import List
 from enum import Enum
+from typing import List
 
 
 class AttackCategory(str, Enum):

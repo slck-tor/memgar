@@ -9,11 +9,11 @@ Monitors permission delegation between agents to detect:
 - Unauthorized capability transfer
 """
 
-from typing import Optional, Dict, List, Set, Any
-from dataclasses import dataclass, field
-from enum import Enum
-from datetime import datetime, timedelta
 from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
 
 class DelegationStatus(Enum):

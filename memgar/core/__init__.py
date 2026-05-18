@@ -13,8 +13,8 @@ from .aho_corasick import (
     Match,
     PatternInfo,
     PatternMatcher,
-    ThreatScanner,
     ScanResult,
+    ThreatScanner,
 )
 
 __all__ = [

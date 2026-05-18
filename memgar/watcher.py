@@ -16,19 +16,17 @@ Usage:
     memgar watch ./data/ --pattern "*.txt"
 """
 
-import os
-import sys
-import time
 import hashlib
-from pathlib import Path
-from datetime import datetime
-from typing import List, Optional, Callable, Set, Dict
-from dataclasses import dataclass, field
+import os
 import threading
-import signal
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Set
 
 from .analyzer import Analyzer
-from .models import Decision, AnalysisResult, MemoryEntry
+from .models import AnalysisResult, Decision, MemoryEntry
 
 
 @dataclass

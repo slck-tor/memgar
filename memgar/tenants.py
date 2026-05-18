@@ -24,10 +24,9 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
-
 
 # ---------------------------------------------------------------------------
 # Plans and their default RPM limits
