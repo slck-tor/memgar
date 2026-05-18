@@ -1,6 +1,7 @@
 name: Security and Quality
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "memgar/**"
