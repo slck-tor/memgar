@@ -132,9 +132,9 @@ memgar = "memgar.cli:main"
 [project.urls]
 Homepage = "https://memgar.com"
 Documentation = "https://docs.memgar.com"
-Repository = "https://github.com/slck-tor/memgar"
-Issues = "https://github.com/slck-tor/memgar/issues"
-Changelog = "https://github.com/slck-tor/memgar/blob/main/CHANGELOG.md"
+Repository = "https://github.com/slcxtor/memgar"
+Issues = "https://github.com/slcxtor/memgar/issues"
+Changelog = "https://github.com/slcxtor/memgar/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["memgar"]
