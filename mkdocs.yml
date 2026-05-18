@@ -147,6 +147,7 @@ nav:
       - Integration:
           - Basic Usage: integration/basic.md
           - LangChain: integration/langchain.md
+          - Memory Frameworks: integration/memory-frameworks.md
           - Configuration: integration/configuration.md
       - Operations:
           - Health Monitoring: operations/health.md
