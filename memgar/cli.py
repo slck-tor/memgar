@@ -2566,6 +2566,147 @@ def memory_replay(
     console.print()
 
 
+@memory_group.command("trace")
+@click.argument("vault_path", type=click.Path(exists=True))
+@click.argument("entry_id")
+@click.option("--json", "output_json", is_flag=True, help="JSON output")
+def memory_trace(vault_path: str, entry_id: str, output_json: bool) -> None:
+    """
+    Trace an entry's provenance across snapshots: first appearance + lineage.
+
+    \b
+    Examples:
+        memgar memory trace ./vault.db src:evil-doc
+        memgar memory trace ./vault.db src:evil-doc --json
+    """
+    from memgar.replay_forensics import ReplayForensics
+
+    vault = _open_vault(vault_path)
+    with vault._lock:  # noqa: SLF001
+        snapshots = list(vault._snapshots)  # noqa: SLF001
+    forensics = ReplayForensics(snapshots)
+
+    appearance = forensics.first_appearance(entry_id)
+    if appearance is None:
+        if output_json:
+            console.print_json(json.dumps({"entry_id": entry_id, "found": False}))
+        else:
+            console.print(
+                f"[yellow]No occurrences of {entry_id!r} in this vault.[/yellow]"
+            )
+        raise SystemExit(1)
+
+    lineage = forensics.lineage(entry_id)
+    if output_json:
+        console.print_json(json.dumps({
+            "found": True,
+            "appearance": appearance.to_dict(),
+            "lineage": [m.to_dict() for m in lineage],
+        }, indent=2))
+        return
+
+    console.print()
+    console.print(
+        Panel(
+            f"[bold]Entry ID:[/bold]       {appearance.entry_id}\n"
+            f"[bold]First seen:[/bold]     {_format_ts(appearance.first_ts)}  "
+            f"[dim]{appearance.first_snapshot_id[:8]}[/dim]\n"
+            f"[bold]Last seen:[/bold]      {_format_ts(appearance.last_ts)}  "
+            f"[dim]{appearance.last_snapshot_id[:8]}[/dim]\n"
+            f"[bold]Snapshots seen:[/bold] {appearance.snapshots_seen}\n"
+            f"[bold]Lifespan:[/bold]       {appearance.lifespan_seconds:.1f}s\n"
+            f"[bold]Mutations:[/bold]      {len(lineage)}",
+            title=f"🧠 Memory Trace — {entry_id}",
+            border_style="cyan",
+        )
+    )
+
+    if lineage:
+        console.print("[bold cyan]Lineage[/bold cyan]")
+        for mut in lineage:
+            marker = "[green]●[/green]" if mut.is_first else "[yellow]~[/yellow]"
+            console.print(
+                f"  {marker} {_format_ts(mut.ts)}  "
+                f"[dim]{mut.snapshot_id[:8]}[/dim]  "
+                f"[dim]{mut.content_hash[:12]}[/dim]  "
+                f"{mut.content_preview[:80]}"
+            )
+    console.print()
+
+
+@memory_group.command("cohort")
+@click.argument("vault_path", type=click.Path(exists=True))
+@click.argument("attr_value")
+@click.option(
+    "--attr",
+    type=click.Choice(["source_id", "source_type"]),
+    default="source_id",
+    help="Group attribute (default: source_id)",
+)
+@click.option("--json", "output_json", is_flag=True, help="JSON output")
+def memory_cohort(
+    vault_path: str,
+    attr_value: str,
+    attr: str,
+    output_json: bool,
+) -> None:
+    """
+    Show every entry that shares an attribute — "what else did this source write?".
+
+    \b
+    Examples:
+        memgar memory cohort ./vault.db evil-doc
+        memgar memory cohort ./vault.db rag --attr source_type
+        memgar memory cohort ./vault.db evil-doc --json
+    """
+    from memgar.replay_forensics import ReplayForensics
+
+    vault = _open_vault(vault_path)
+    with vault._lock:  # noqa: SLF001
+        snapshots = list(vault._snapshots)  # noqa: SLF001
+    forensics = ReplayForensics(snapshots)
+    members = forensics.cohort(attr_value, attr=attr)
+
+    if output_json:
+        console.print_json(json.dumps({
+            "attr": attr,
+            "attr_value": attr_value,
+            "member_count": len(members),
+            "members": [m.to_dict() for m in members],
+        }, indent=2))
+        return
+
+    if not members:
+        console.print(
+            Panel(
+                f"[yellow]No entries with {attr}={attr_value!r}.[/yellow]",
+                title="🧠 Cohort",
+                border_style="yellow",
+            )
+        )
+        return
+
+    console.print()
+    console.print(
+        f"[bold cyan]🧠 Cohort — {attr}={attr_value}  "
+        f"({len(members)} entr{'ies' if len(members) != 1 else 'y'})[/bold cyan]\n"
+    )
+    table = Table(box=box.SIMPLE, show_header=True)
+    table.add_column("Entry ID", style="cyan", width=22)
+    table.add_column("First seen", width=22)
+    table.add_column("Last hash", style="dim", width=14)
+    table.add_column("Content (preview)")
+    for m in members:
+        table.add_row(
+            m.entry_id[:20] + ("…" if len(m.entry_id) > 20 else ""),
+            _format_ts(m.first_seen_ts),
+            m.last_content_hash[:12],
+            m.last_content_preview[:80],
+        )
+    console.print(table)
+    console.print()
+
+
 # =============================================================================
 # APPROVE COMMAND — Human-in-the-Loop
 # =============================================================================
