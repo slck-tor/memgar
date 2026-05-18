@@ -85,7 +85,7 @@ class Prediction:
     def _generate_id(self) -> str:
         """Generate unique ID"""
         data = f"{self.content_hash}_{self.timestamp}"
-        return hashlib.md5(data.encode()).hexdigest()[:16]
+        return hashlib.md5(data.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 @dataclass

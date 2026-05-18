@@ -29,31 +29,31 @@ from typing import List, Optional, Set, Tuple
 # Character class definitions
 # ---------------------------------------------------------------------------
 
-# Invisible / zero-width — the classic prompt injection covert channel
+# Invisible / zero-width - the classic prompt injection covert channel
 _ZERO_WIDTH = {
-    "​",  # ZERO WIDTH SPACE
-    "‌",  # ZERO WIDTH NON-JOINER
-    "‍",  # ZERO WIDTH JOINER
-    "⁠",  # WORD JOINER
-    "⁡",  # FUNCTION APPLICATION
-    "⁢",  # INVISIBLE TIMES
-    "⁣",  # INVISIBLE SEPARATOR
-    "⁤",  # INVISIBLE PLUS
-    "﻿",  # ZERO WIDTH NO-BREAK SPACE / BOM
-    "᠎",  # MONGOLIAN VOWEL SEPARATOR
+    "\u200b",  # ZERO WIDTH SPACE
+    "\u200c",  # ZERO WIDTH NON-JOINER
+    "\u200d",  # ZERO WIDTH JOINER
+    "\u2060",  # WORD JOINER
+    "\u2061",  # FUNCTION APPLICATION
+    "\u2062",  # INVISIBLE TIMES
+    "\u2063",  # INVISIBLE SEPARATOR
+    "\u2064",  # INVISIBLE PLUS
+    "\ufeff",  # ZERO WIDTH NO-BREAK SPACE / BOM
+    "\u180e",  # MONGOLIAN VOWEL SEPARATOR
 }
 
-# Bidi override — used in Trojan Source attacks (CVE-2021-42574 class)
+# Bidi override - used in Trojan Source attacks (CVE-2021-42574 class)
 _BIDI_OVERRIDE = {
-    "‪",  # LRE — LEFT-TO-RIGHT EMBEDDING
-    "‫",  # RLE — RIGHT-TO-LEFT EMBEDDING
-    "‬",  # PDF — POP DIRECTIONAL FORMATTING
-    "‭",  # LRO — LEFT-TO-RIGHT OVERRIDE
-    "‮",  # RLO — RIGHT-TO-LEFT OVERRIDE
-    "⁦",  # LRI — LEFT-TO-RIGHT ISOLATE
-    "⁧",  # RLI — RIGHT-TO-LEFT ISOLATE
-    "⁨",  # FSI — FIRST STRONG ISOLATE
-    "⁩",  # PDI — POP DIRECTIONAL ISOLATE
+    "\u202a",  # LRE - LEFT-TO-RIGHT EMBEDDING
+    "\u202b",  # RLE - RIGHT-TO-LEFT EMBEDDING
+    "\u202c",  # PDF - POP DIRECTIONAL FORMATTING
+    "\u202d",  # LRO - LEFT-TO-RIGHT OVERRIDE
+    "\u202e",  # RLO - RIGHT-TO-LEFT OVERRIDE
+    "\u2066",  # LRI - LEFT-TO-RIGHT ISOLATE
+    "\u2067",  # RLI - RIGHT-TO-LEFT ISOLATE
+    "\u2068",  # FSI - FIRST STRONG ISOLATE
+    "\u2069",  # PDI - POP DIRECTIONAL ISOLATE
 }
 
 # Homoglyph table — visually similar characters from non-Latin scripts.

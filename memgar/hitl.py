@@ -817,11 +817,15 @@ class HITLCheckpoint:
 
         # Callbacks
         if result.approved and self._on_approved:
-            try: self._on_approved(result)
-            except Exception: pass
+            try:
+                self._on_approved(result)
+            except Exception as exc:
+                logger.exception("HITL on_approved callback failed: %s", exc)
         elif result.denied and self._on_denied:
-            try: self._on_denied(result)
-            except Exception: pass
+            try:
+                self._on_denied(result)
+            except Exception as exc:
+                logger.exception("HITL on_denied callback failed: %s", exc)
 
         # Update stats
         self._stats[result.status.value if result.status.value in self._stats else "denied"] += 1

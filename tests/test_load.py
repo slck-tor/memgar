@@ -203,7 +203,7 @@ class TestLatencyDistribution:
 
         print(f"\nP95 benign={p95_benign:.3f}ms  attack={p95_attack:.3f}ms")
         # Attack analysis should not be more than 3x slower
-        assert p95_attack < p95_benign * 3 or p95_attack < P99_LATENCY_MS, (
+        assert p95_attack < p95_benign * 3 or p95_attack < P99_LATENCY_MS_CI, (
             "Attack analysis significantly slower than benign — timing oracle risk"
         )
 

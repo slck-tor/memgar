@@ -338,7 +338,7 @@ class PDFAnalyzer:
         
         info = {
             "size_bytes": len(data),
-            "md5": hashlib.md5(data).hexdigest(),
+            "md5": hashlib.md5(data, usedforsecurity=False).hexdigest(),
         }
         
         if filename:

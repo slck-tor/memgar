@@ -17,8 +17,10 @@ Commands:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +40,7 @@ from memgar.scanner import Scanner
 
 
 console = Console()
+logger = logging.getLogger("memgar.cli")
 
 
 # =============================================================================
@@ -1655,11 +1658,13 @@ def dow_scan(path, threshold, output, output_json):
                     for item in (data if isinstance(data, list) else [data]):
                         t = item.get("content", item.get("text", "")) if isinstance(item, dict) else str(item)
                         if t.strip(): contents.append(t); sources.append(str(fp))
-                except: pass
+                except json.JSONDecodeError as exc:
+                    logger.debug("Skipping invalid JSON during DoW scan: %s (%s)", fp, exc)
             else:
                 for line in raw.splitlines():
                     if line.strip(): contents.append(line.strip()); sources.append(str(fp))
-        except: pass
+        except OSError as exc:
+            logger.debug("Skipping unreadable file during DoW scan: %s (%s)", fp, exc)
     if p.is_file(): _read(p)
     else:
         for f in sorted(p.rglob("*")):
@@ -1982,7 +1987,7 @@ def memory_group() -> None:
     pass
 
 
-def _open_vault(path: str, public_key_b64: Optional[str] = None) -> "MemoryVault":
+def _open_vault(path: str, public_key_b64: Optional[str] = None):
     """Open an existing vault DB. Loads snapshots from SQLite on init."""
     from memgar.memory_vault import MemoryVault
     if not Path(path).exists():
@@ -1998,7 +2003,7 @@ def _open_vault(path: str, public_key_b64: Optional[str] = None) -> "MemoryVault
     return MemoryVault(db_path=path, public_key=public_key)
 
 
-def _resolve_snapshot(vault: "MemoryVault", snapshot_id: Optional[str]):
+def _resolve_snapshot(vault, snapshot_id: Optional[str]):
     """Resolve a snapshot by full ID, prefix, or None=latest. Exit 1 if missing."""
     snap = vault._get_snapshot(snapshot_id)  # noqa: SLF001
     if snap is None:
@@ -3792,7 +3797,7 @@ def siem_test(splunk_url, splunk_token, datadog_key, datadog_site, elastic_url,
         memgar siem test --datadog-key DD_API_KEY
         memgar siem test --syslog-host 192.168.1.100 --syslog-proto tcp
     """
-    from memgar.siem import SIEMEvent
+    from memgar.siem import EventCategory, SIEMEvent
 
     router = _build_router_from_opts(
         splunk_url, splunk_token, datadog_key, datadog_site,
@@ -3864,7 +3869,7 @@ def siem_stream(path, splunk_url, splunk_token, datadog_key, datadog_site,
         memgar siem stream ./supply_report.json --splunk-url URL --splunk-token TOKEN
         memgar siem stream ./agent.ledger.json --datadog-key KEY
     """
-    from memgar.siem import SIEMEvent
+    from memgar.siem import EventCategory, SIEMEvent
 
     router = _build_router_from_opts(
         splunk_url, splunk_token, datadog_key, datadog_site,

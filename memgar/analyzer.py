@@ -46,7 +46,8 @@ _LAST_FEED_HEALTH: dict | None = None
 
 def _load_patterns_fast() -> list:
     """Load patterns from pickle cache (3ms) or full import (3500ms), then merge feed patterns."""
-    import os, pickle, hashlib
+    import hashlib
+    import pickle  # nosec B403
     from pathlib import Path
 
     class _RestrictedUnpickler(pickle.Unpickler):
@@ -85,8 +86,8 @@ def _load_patterns_fast() -> list:
             file_hash = hashlib.sha256(patterns_path.read_bytes()).hexdigest()[:16]
             if payload.get("hash") == file_hash:
                 patterns = payload["patterns"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("pattern cache load skipped: %s", exc)
     if not patterns:
         # Cache miss — full import
         from memgar.patterns import PATTERNS
@@ -111,8 +112,8 @@ def _load_patterns_fast() -> list:
             bundle = loader.load(auto_sync=getattr(feed_cfg, "auto_sync", True))
             try:
                 _LAST_FEED_HEALTH = loader.health()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("feed health snapshot unavailable: %s", exc)
             if bundle:
                 existing_ids = {t.id for t in patterns}
                 for threat in bundle.to_threat_objects():
@@ -1922,7 +1923,7 @@ class Analyzer:
                 l2ml.set_attribute("memgar.l2ml.latency_ms", ml_latency)
                 if ml_prob >= self._transformer_threshold:
                     layers_used.append("transformer_ml")
-                    from memgar.models import ThreatMatch, ThreatCategory as _TC
+                    from memgar.models import ThreatCategory as _TC
                     ml_threat = Threat(
                         id="ML-DETECT-001",
                         name="ML Transformer Detection",

@@ -237,5 +237,8 @@ class AttackGenerator:
             "confidence": 0.95,
             "weight": 1.2,
             "origin": origin,
-            "fingerprint": hashlib.sha1(text.encode("utf-8")).hexdigest()[:16],
+            "fingerprint": hashlib.sha1(
+                text.encode("utf-8"),
+                usedforsecurity=False,
+            ).hexdigest()[:16],
         }

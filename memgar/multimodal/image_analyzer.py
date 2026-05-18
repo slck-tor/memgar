@@ -335,7 +335,7 @@ class ImageAnalyzer:
         """Analyze basic file structure."""
         info = {
             "size_bytes": len(data),
-            "md5": hashlib.md5(data).hexdigest(),
+            "md5": hashlib.md5(data, usedforsecurity=False).hexdigest(),
             "sha256": hashlib.sha256(data).hexdigest()[:32],
         }
         

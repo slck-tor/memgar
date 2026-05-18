@@ -260,7 +260,7 @@ class AudioAnalyzer:
         
         info = {
             "size_bytes": len(data),
-            "md5": hashlib.md5(data).hexdigest()[:16],
+            "md5": hashlib.md5(data, usedforsecurity=False).hexdigest()[:16],
         }
         
         if filename:

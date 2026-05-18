@@ -26,7 +26,7 @@ Total: 100 patterns
 from __future__ import annotations
 
 import os
-import pickle
+import pickle  # nosec B403
 import hashlib
 from pathlib import Path
 
@@ -14325,6 +14325,29 @@ def _save_pattern_cache() -> None:
         pass  # cache write failure is non-fatal
 
 
+class _PatternCacheUnpickler(pickle.Unpickler):
+    """Load only built-in containers and Memgar model classes from local cache."""
+
+    _ALLOWED = {
+        ("builtins", "dict"),
+        ("builtins", "list"),
+        ("builtins", "tuple"),
+        ("builtins", "str"),
+        ("builtins", "int"),
+        ("builtins", "float"),
+        ("builtins", "bool"),
+        ("builtins", "NoneType"),
+        ("memgar.models", "Threat"),
+        ("memgar.models", "ThreatCategory"),
+        ("memgar.models", "Severity"),
+    }
+
+    def find_class(self, module: str, name: str):
+        if (module, name) not in self._ALLOWED:
+            raise pickle.UnpicklingError(f"Forbidden pickle class: {module}.{name}")
+        return super().find_class(module, name)
+
+
 def _load_pattern_cache() -> "list[Threat] | None":
     """Load PATTERNS from pickle cache if valid."""
     try:
@@ -14332,7 +14355,7 @@ def _load_pattern_cache() -> "list[Threat] | None":
         if not cache_path.exists():
             return None
         with open(cache_path, "rb") as f:
-            payload = pickle.load(f)
+            payload = _PatternCacheUnpickler(f).load()
         if payload.get("hash") != _file_hash():
             return None  # patterns.py changed — rebuild
         return payload["patterns"]
