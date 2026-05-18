@@ -1,0 +1,5 @@
+# Sync-script outputs are large and noisy — checked in only as
+# directory placeholder. The orchestrator workflow opens a PR with
+# fresh JSONL content; we don't keep historical versions here.
+*.jsonl
+!.gitignore
