@@ -32,12 +32,12 @@ Usage:
     )
 """
 
-import re
 import json
-from typing import Optional, Dict, List, Set, Any, Union
+import re
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set, Union
 
 
 class MCPThreatType(Enum):
@@ -434,7 +434,7 @@ class MCPSecurityLayer:
         # Use Memgar if available
         if self.text_analyzer and len(response_str) > 20:
             try:
-                from ..models import MemoryEntry, Decision
+                from ..models import Decision, MemoryEntry
                 entry = MemoryEntry(content=response_str[:5000])
                 result = self.text_analyzer.analyze(entry)
                 
@@ -563,7 +563,7 @@ class MCPSecurityLayer:
         threats = []
         
         try:
-            from ..models import MemoryEntry, Decision
+            from ..models import Decision, MemoryEntry
             
             # Analyze each parameter
             for key, value in parameters.items():

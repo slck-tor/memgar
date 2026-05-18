@@ -6,7 +6,6 @@ False positive oranını düşürmek için güvenli içerik pattern'leri.
 """
 
 import re
-from typing import List
 
 # Güvenli/yasal content pattern'leri
 LEGITIMATE_PATTERNS = [

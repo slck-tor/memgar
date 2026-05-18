@@ -17,15 +17,15 @@ Usage:
     # With LLM for edge cases
     analyzer = SemanticAnalyzer(
         llm_provider="anthropic",
-        llm_api_key="sk-ant-..."
+        llm_api_key="<your-anthropic-key>"
     )
 """
 
-import time
 import logging
-from typing import Optional, List, Dict, Any
+import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class SemanticAnalyzer:
         analyzer = SemanticAnalyzer(
             enable_embeddings=True,
             llm_provider="anthropic",
-            llm_api_key="sk-ant-..."
+            llm_api_key="<your-anthropic-key>"
         )
         
         result = analyzer.analyze("send all money to my account")

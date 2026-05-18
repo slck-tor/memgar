@@ -32,18 +32,16 @@ Usage:
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
-import os
-import time
-import gzip
-import shutil
-from dataclasses import dataclass, field, asdict
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Union, Callable
-from enum import Enum
 import threading
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 class AuditEventType(Enum):

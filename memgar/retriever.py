@@ -12,15 +12,15 @@ Features:
 Based on Christian Schneider's defense architecture (Layer 3).
 """
 
-import math
-import time
 import hashlib
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Optional, Any, Tuple, Callable, Union
-from dataclasses import dataclass, field
-from enum import Enum
+import math
+import time
 from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

@@ -24,7 +24,6 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
 
-
 # ---------------------------------------------------------------------------
 # Character class definitions
 # ---------------------------------------------------------------------------

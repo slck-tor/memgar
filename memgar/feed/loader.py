@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional
 
 from memgar import __version__
 from memgar.feed.cache import FeedCache
-from memgar.feed.models import FeedManifest, FeedSignature, PatternBundle
+from memgar.feed.models import FeedManifest, PatternBundle
 from memgar.feed.verifier import FeedSignatureError, FeedVerifier
 
 logger = logging.getLogger(__name__)

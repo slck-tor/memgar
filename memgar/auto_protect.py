@@ -30,13 +30,11 @@ or a log warning depending on their config.
 from __future__ import annotations
 
 import functools
-import importlib
 import json
 import logging
 import sys
 import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger("memgar.auto")
@@ -171,7 +169,7 @@ def _scan_content(content: str, source: str = "auto") -> bool:
     _state.requests_scanned += 1
 
     try:
-        from memgar.models import MemoryEntry, Decision
+        from memgar.models import Decision, MemoryEntry
         entry = MemoryEntry(content=content, source_type=source)
         result = analyzer.analyze(entry)
 
@@ -229,7 +227,7 @@ def _scan_content(content: str, source: str = "auto") -> bool:
             report = baseline.check()
             if report.level in (DeviationLevel.SUSPICIOUS, DeviationLevel.CRITICAL):
                 try:
-                    from memgar.siem import SIEMEvent, EventCategory
+                    from memgar.siem import EventCategory, SIEMEvent
                     event = SIEMEvent(
                         category  = EventCategory.AUTO_PROTECT_BLOCK,
                         severity  = "critical" if report.level == DeviationLevel.CRITICAL else "high",

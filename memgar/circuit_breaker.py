@@ -31,13 +31,13 @@ Usage:
 
 from __future__ import annotations
 
-import time
 import threading
-from dataclasses import dataclass, field
+import time
+from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Callable, Dict, Any
-from collections import deque
+from typing import Any, Callable, Dict, List, Optional
 
 
 class CircuitState(Enum):

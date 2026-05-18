@@ -25,12 +25,12 @@ Total: 100 patterns
 
 from __future__ import annotations
 
+import hashlib
 import os
 import pickle  # nosec B403
-import hashlib
 from pathlib import Path
 
-from memgar.models import Threat, ThreatCategory, Severity
+from memgar.models import Severity, Threat, ThreatCategory
 
 # =============================================================================
 # FINANCIAL THREATS (FIN-001 to FIN-010)

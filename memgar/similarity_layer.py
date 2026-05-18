@@ -50,7 +50,6 @@ logger = logging.getLogger(__name__)
 
 from memgar.embeddings import THREAT_EXAMPLES
 
-
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -206,7 +205,6 @@ class SimilarityLayer:
 
     def _compute_matrix(self) -> None:
         """Pre-compute L2-normalised embedding matrix for all examples."""
-        import numpy as np
         texts = [ex for _, ex in self._examples]
         logger.debug("SimilarityLayer: encoding %d examples …", len(texts))
         embs = self._model.encode(

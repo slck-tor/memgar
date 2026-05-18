@@ -33,17 +33,14 @@ CLI usage::
 
 from __future__ import annotations
 
-import json
 import re
-import time
 import threading
-from collections import deque, defaultdict
+import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
-
 
 # ---------------------------------------------------------------------------
 # Constants

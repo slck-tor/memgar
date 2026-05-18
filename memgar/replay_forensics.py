@@ -40,11 +40,10 @@ Usage:
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence
 
-from memgar.memory_vault import SnapshotEntry, VaultSnapshot
+from memgar.memory_vault import VaultSnapshot
 
 
 @dataclass

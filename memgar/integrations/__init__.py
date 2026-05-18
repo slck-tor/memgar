@@ -48,8 +48,8 @@ SecureConversationChain = None
 
 try:
     from .langchain import (
-        MemgarMemoryGuard,
         MemgarCallbackHandler,
+        MemgarMemoryGuard,
         SecureConversationChain,
     )
     LANGCHAIN_AGENT_AVAILABLE = True
@@ -65,8 +65,8 @@ secure_agent = None
 try:
     from .crewai import (
         MemgarCrewGuard,
-        secure_crew,
         secure_agent,
+        secure_crew,
     )
     CREWAI_AVAILABLE = True
 except ImportError:
@@ -138,10 +138,12 @@ sync_metadata_to_retriever = None
 try:
     from .langchain_rag import (
         MemgarRetriever as LangChainMemgarRetriever,
+    )
+    from .langchain_rag import (
         MemgarVectorStoreRetriever,
         TrustAwareDocumentLoader,
-        create_secure_rag_chain,
         create_secure_conversational_chain,
+        create_secure_rag_chain,
         sync_metadata_to_retriever,
     )
     LANGCHAIN_RAG_AVAILABLE = True
@@ -157,10 +159,12 @@ create_secure_chat_engine = None
 
 try:
     from .llamaindex_rag import (
-        MemgarRetriever as LlamaIndexMemgarRetriever,
         MemgarNodePostprocessor,
-        create_secure_query_engine,
         create_secure_chat_engine,
+        create_secure_query_engine,
+    )
+    from .llamaindex_rag import (
+        MemgarRetriever as LlamaIndexMemgarRetriever,
     )
     LLAMAINDEX_AVAILABLE = True
 except ImportError:

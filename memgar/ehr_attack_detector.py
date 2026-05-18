@@ -13,8 +13,8 @@ This module implements EHR-specific detection patterns.
 """
 
 import re
-from typing import List, Dict, Tuple
 from dataclasses import dataclass
+from typing import List, Tuple
 
 
 @dataclass

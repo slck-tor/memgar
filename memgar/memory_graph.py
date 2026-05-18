@@ -55,8 +55,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import pickle
-import time
+import pickle  # nosec B403 — restricted via _GraphUnpickler, see below
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -68,7 +67,17 @@ logger = logging.getLogger(__name__)
 
 
 class _GraphUnpickler(pickle.Unpickler):
-    """Allowlist-based unpickler for MemoryGraph pickle format (prevents RCE)."""
+    """Allowlist-based unpickler for MemoryGraph pickle format.
+
+    Mitigates the standard pickle RCE class (CWE-502) by overriding
+    ``find_class`` to refuse any module outside ``_SAFE_ROOTS``. Even if
+    an attacker can write to the cached graph file on disk, they cannot
+    use it to import arbitrary code at unpickle time — the unpickler
+    raises ``UnpicklingError`` before ``__reduce__`` runs.
+
+    See also: ``memgar.patterns._RestrictedUnpickler`` for the equivalent
+    pattern-cache guard.
+    """
     _SAFE_ROOTS = {
         "builtins", "networkx", "numpy", "memgar",
         "datetime", "collections", "copy_reg", "abc", "_functools",

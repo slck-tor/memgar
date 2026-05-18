@@ -159,8 +159,29 @@ line-length = 100
 select = ["E", "F", "I", "N", "W", "B", "Q"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Re-export modules: F401 is intent (public API surface), documented by __all__
+"memgar/__init__.py" = ["F401"]
+"memgar/integrations/__init__.py" = ["F401"]
+"memgar/agents/__init__.py" = ["F401"]
+"memgar/core/__init__.py" = ["F401"]
+"memgar/feed/__init__.py" = ["F401"]
+"memgar/multimodal/__init__.py" = ["F401"]
+"memgar/observability/__init__.py" = ["F401"]
+# Test files: unused imports often intentional (fixtures, parametrize markers)
+"tests/*" = ["F401"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["memgar"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "ml/data", "scripts/training_data"]
+skips = [
+    # B404 (subprocess import) — managed call-sites already validated
+    "B404",
+    # B603 (subprocess without shell=True) — equivalent to B404 above
+    "B603",
+]
 
 [tool.mypy]
 python_version = "3.9"

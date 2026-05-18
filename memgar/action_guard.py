@@ -35,7 +35,7 @@ Usage:
     guard = ActionGuard(
         memory_graph=graph,
         llm_provider="anthropic",
-        llm_api_key="sk-ant-...",
+        llm_api_key="<your-anthropic-key>",
     )
     
     result = guard.validate(
@@ -55,13 +55,12 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

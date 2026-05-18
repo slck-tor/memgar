@@ -17,14 +17,12 @@ Dependencies (optional):
 - pdfplumber: Text extraction
 """
 
-import re
-import io
-import zlib
 import base64
-from typing import Optional, Dict, List, Any, Union
+import io
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
 
 # Optional imports
 try:
@@ -715,7 +713,7 @@ class PDFAnalyzer:
             # Use Memgar analyzer if available
             if self.text_analyzer and len(full_text) > 20:
                 try:
-                    from ..models import MemoryEntry, Decision
+                    from ..models import Decision, MemoryEntry
                     entry = MemoryEntry(content=full_text[:5000])
                     analysis = self.text_analyzer.analyze(entry)
                     

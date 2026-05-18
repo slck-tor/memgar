@@ -22,13 +22,12 @@ Usage:
     threats = detector.detect_swarm_threats()
 """
 
-import re
-from typing import Optional, Dict, List, Set, Any, Tuple
-from dataclasses import dataclass, field
-from enum import Enum
-from datetime import datetime, timedelta
-from collections import defaultdict
 import hashlib
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 
 class SwarmThreatType(Enum):

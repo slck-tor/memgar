@@ -53,4 +53,5 @@ class FeedVerifier:
 
 # Avoid circular annotation issues on Python 3.9 — import here for type hints only.
 from typing import Optional  # noqa: E402
+
 from memgar.feed.models import FeedManifest  # noqa: E402, F401

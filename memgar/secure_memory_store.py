@@ -29,7 +29,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from memgar.models import MemoryEntry
-from memgar.runtime import ChunkResult, EnforcementAction, EnforcementResult, MemoryRuntimeEnforcer, RuntimePolicy
+from memgar.runtime import (
+    ChunkResult,
+    EnforcementAction,
+    EnforcementResult,
+    MemoryRuntimeEnforcer,
+    RuntimePolicy,
+)
 
 
 @dataclass

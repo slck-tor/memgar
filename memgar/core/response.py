@@ -25,13 +25,11 @@ Usage:
 
 from __future__ import annotations
 
+import html
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Dict, List, Optional, Any
-import html
-
+from typing import Dict, List, Optional
 
 # =============================================================================
 # CONSTANTS

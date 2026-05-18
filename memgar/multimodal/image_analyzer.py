@@ -18,19 +18,17 @@ Dependencies (optional, graceful degradation):
 - numpy: Statistical analysis
 """
 
-import io
-import re
 import base64
 import hashlib
-import struct
-from typing import Optional, Dict, List, Any, Tuple, Union
+import io
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
 
 # Optional imports with graceful fallback
 try:
-    from PIL import Image, ExifTags
+    from PIL import ExifTags, Image
     PIL_AVAILABLE = True
 except ImportError:
     PIL_AVAILABLE = False
@@ -626,7 +624,7 @@ class ImageAnalyzer:
             # Use Memgar text analyzer if available
             if self.text_analyzer and len(text) > 20:
                 try:
-                    from ..models import MemoryEntry, Decision
+                    from ..models import Decision, MemoryEntry
                     entry = MemoryEntry(content=text)
                     analysis = self.text_analyzer.analyze(entry)
                     

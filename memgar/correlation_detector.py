@@ -33,13 +33,11 @@ overlap rather than embeddings, with optional embedding upgrade.
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque, Dict, List, Optional, Tuple
-
+from typing import Deque, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Lexicons

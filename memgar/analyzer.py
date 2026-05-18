@@ -13,12 +13,12 @@ Improvements:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 import time
 import unicodedata
-import logging
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -32,10 +32,9 @@ from memgar.models import (
     Threat,
     ThreatMatch,
 )
+
 # patterns.py is large (~3500ms cold parse) — we lazy-import it
 # and prefer the pickle cache when available
-from memgar.patterns import get_patterns_by_severity  # small helpers only
-
 
 # Most recent FeedLoader.health() snapshot from _load_patterns_fast(). Read by
 # Analyzer.health_check() to surface degraded feed state without rewiring the
@@ -1657,7 +1656,9 @@ class Analyzer:
         # Emit Prometheus metrics — non-fatal: metrics must never break analysis.
         try:
             from memgar.observability.metrics import (
-                ANALYSES_TOTAL, ANALYSIS_LATENCY, RISK_SCORE_HISTOGRAM
+                ANALYSES_TOTAL,
+                ANALYSIS_LATENCY,
+                RISK_SCORE_HISTOGRAM,
             )
             if ANALYSES_TOTAL is not None:
                 ANALYSES_TOTAL.labels(decision=result.decision.value).inc()
@@ -1675,6 +1676,7 @@ class Analyzer:
         try:
             import hashlib as _hashlib
             import time as _time
+
             from ml.continuous_learning import Prediction, StorageManager
             if self._storage_manager is None:
                 self._storage_manager = StorageManager()

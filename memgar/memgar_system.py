@@ -27,7 +27,7 @@ Usage:
     # Initialize complete system
     system = MemgarSystem(
         llm_provider="anthropic",
-        llm_api_key="sk-ant-...",
+        llm_api_key="<your-anthropic-key>",
         enable_graph=True,
         enable_advanced_scoring=True,
         enable_action_guard=True,
@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

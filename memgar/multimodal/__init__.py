@@ -21,10 +21,10 @@ Usage:
     result = analyzer.analyze_audio(audio_bytes)
 """
 
-from .image_analyzer import ImageAnalyzer
-from .pdf_analyzer import PDFAnalyzer
 from .audio_analyzer import AudioAnalyzer
+from .image_analyzer import ImageAnalyzer
 from .multimodal_analyzer import MultiModalAnalyzer
+from .pdf_analyzer import PDFAnalyzer
 
 __all__ = [
     "ImageAnalyzer",

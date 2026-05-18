@@ -23,7 +23,7 @@ Usage:
     
     engine = AdvancedEvolutionEngine(
         llm_provider="anthropic",
-        llm_api_key="sk-ant-...",
+        llm_api_key="<your-anthropic-key>",
         enable_auto_deploy=True,
     )
     
@@ -42,7 +42,6 @@ Usage:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -50,7 +49,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

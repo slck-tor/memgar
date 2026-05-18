@@ -68,7 +68,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -719,7 +718,8 @@ class LedgerForensicsIntegration:
             - forensics: ForensicReport dict (content threats)
             - summary: combined risk assessment
         """
-        import tempfile, os
+        import os
+        import tempfile
 
         # 1. Ledger integrity
         ledger_report = self._ledger.verify()
