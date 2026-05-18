@@ -1,0 +1,44 @@
+name: Node SDK and Plugins
+
+on:
+  push:
+    paths:
+      - "packages/node/**"
+      - "plugins/memgar/**"
+      - ".agents/plugins/marketplace.json"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/node-sdk.yml"
+  pull_request:
+    paths:
+      - "packages/node/**"
+      - "plugins/memgar/**"
+      - ".agents/plugins/marketplace.json"
+      - ".claude-plugin/marketplace.json"
+      - ".github/workflows/node-sdk.yml"
+
+jobs:
+  test-node-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate plugin and package JSON
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const files = [
+            'packages/node/package.json',
+            'plugins/memgar/.codex-plugin/plugin.json',
+            'plugins/memgar/.claude-plugin/plugin.json',
+            '.agents/plugins/marketplace.json',
+            '.claude-plugin/marketplace.json',
+          ];
+          for (const file of files) {
+            JSON.parse(fs.readFileSync(file, 'utf8'));
+            console.log(`validated ${file}`);
+          }
+          NODE
+      - name: Run Node SDK tests
+        run: npm test --prefix packages/node
