@@ -1,0 +1,113 @@
+name: Threat Intel Sync
+
+# Weekly sync of external threat-intelligence sources into
+# `proposed_patterns/`, opening a single aggregate PR labelled
+# `threat-intel-proposal` for curator review. See
+# `docs/operations/threat-intel-pipeline.md`.
+
+on:
+  schedule:
+    # Every Thursday 04:00 UTC — pre-staged for Mon feed publish
+    - cron: "0 4 * * 4"
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: 'Comma-separated source list (mitre,cve,owasp,jailbreak,huggingface). Default: all'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: threat-intel-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync sources + open curator PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install runtime deps (no extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Determine sources
+        id: srcs
+        run: |
+          input="${{ github.event.inputs.sources }}"
+          if [ -z "$input" ]; then
+            input="mitre,cve,owasp,jailbreak,huggingface"
+          fi
+          echo "sources=$input" >> "$GITHUB_OUTPUT"
+
+      - name: Run MITRE ATT&CK sync
+        if: contains(steps.srcs.outputs.sources, 'mitre')
+        run: python scripts/intel/sync_mitre.py
+
+      - name: Run CVE/NVD sync
+        if: contains(steps.srcs.outputs.sources, 'cve')
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          python scripts/intel/sync_cves.py \
+            ${NVD_API_KEY:+--api-key $NVD_API_KEY}
+
+      - name: Run OWASP releases sync
+        if: contains(steps.srcs.outputs.sources, 'owasp')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/intel/sync_owasp.py --github-token "$GITHUB_TOKEN"
+
+      - name: Run jailbreak-repos sync
+        if: contains(steps.srcs.outputs.sources, 'jailbreak')
+        run: python scripts/intel/sync_jailbreak_repos.py --max-per-source 25
+
+      - name: Run HuggingFace datasets sync
+        if: contains(steps.srcs.outputs.sources, 'huggingface')
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python scripts/intel/sync_huggingface_datasets.py --max-rows-per-dataset 50
+
+      - name: Stats summary
+        run: python scripts/intel/curate.py --stats
+
+      - name: Open / update curator PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: threat-intel-sync/auto
+          commit-message: "chore(intel): refresh proposed_patterns/ from external sources"
+          title: "🔍 Threat-intel sync — review proposed_patterns/"
+          body: |
+            Automated refresh of `proposed_patterns/` from the five
+            configured external sources. **Curator review required.**
+
+            Workflow: `.github/workflows/threat-intel-sync.yml`
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ## Next steps
+
+            1. `python scripts/intel/curate.py --stats` for an overview
+            2. `python scripts/intel/curate.py` to walk candidates interactively
+            3. Accepted entries land in `proposed_patterns/accepted.jsonl`
+            4. Curator manually drafts regex/keywords from accepted entries
+               and adds to `memgar/patterns.py`
+            5. Next Mon 06:00 UTC the feed-publish workflow ships them
+          labels: |
+            threat-intel-proposal
+          delete-branch: false

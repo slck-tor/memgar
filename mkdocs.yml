@@ -153,6 +153,7 @@ nav:
           - Observability: operations/observability.md
           - Threat Feed: operations/feed.md
           - Threat Feed Pipeline: operations/threat-feed-pipeline.md
+          - Threat Intel Sync: operations/threat-intel-pipeline.md
           - Memory Forensics: operations/forensics.md
       - Development:
           - Contributing: development/contributing.md
