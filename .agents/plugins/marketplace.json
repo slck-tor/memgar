@@ -1,0 +1,20 @@
+{
+  "name": "memgar-plugins",
+  "interface": {
+    "displayName": "Memgar Plugins"
+  },
+  "plugins": [
+    {
+      "name": "memgar",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memgar"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Security"
+    }
+  ]
+}

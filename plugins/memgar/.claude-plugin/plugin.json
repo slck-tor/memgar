@@ -1,0 +1,12 @@
+{
+  "name": "memgar",
+  "description": "Memgar memory poisoning guardrails for Claude Code workflows.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Memgar",
+    "email": "hello@memgar.com"
+  },
+  "homepage": "https://memgar.com",
+  "repository": "https://github.com/slcxtor/memgar",
+  "license": "MIT"
+}

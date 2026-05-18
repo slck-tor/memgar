@@ -1,0 +1,43 @@
+{
+  "name": "@memgar/sdk",
+  "version": "0.1.0",
+  "description": "Zero-dependency Node.js client for Memgar Gateway and local Memgar CLI analysis.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": [
+    "memgar",
+    "memory-poisoning",
+    "ai-security",
+    "agent-security",
+    "gateway",
+    "llm-security"
+  ],
+  "author": "Memgar <hello@memgar.com>",
+  "license": "MIT",
+  "homepage": "https://memgar.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/slcxtor/memgar.git",
+    "directory": "packages/node"
+  },
+  "bugs": {
+    "url": "https://github.com/slcxtor/memgar/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "memgar",
+  "version": "0.1.0",
+  "description": "Memgar memory poisoning guardrails for Codex workflows.",
+  "author": {
+    "name": "Memgar",
+    "email": "hello@memgar.com",
+    "url": "https://memgar.com"
+  },
+  "homepage": "https://memgar.com",
+  "repository": "https://github.com/slcxtor/memgar",
+  "license": "MIT",
+  "keywords": [
+    "memory-poisoning",
+    "ai-security",
+    "agent-security",
+    "gateway",
+    "secure-memory"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Memgar",
+    "shortDescription": "Memory poisoning firewall for agent workflows.",
+    "longDescription": "Use Memgar Gateway and CLI checks to inspect memory writes, retrieval chunks, tool results, and gateway traffic before they influence an agent.",
+    "developerName": "Memgar",
+    "category": "Security",
+    "capabilities": [
+      "Security",
+      "Memory Guard",
+      "Gateway"
+    ],
+    "websiteURL": "https://memgar.com",
+    "privacyPolicyURL": "https://memgar.com/privacy",
+    "termsOfServiceURL": "https://memgar.com/terms",
+    "defaultPrompt": [
+      "Check Memgar gateway status.",
+      "Scan this memory before storing it.",
+      "Review this agent for raw memory writes."
+    ],
+    "brandColor": "#7E57C2"
+  }
+}
