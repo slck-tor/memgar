@@ -11,7 +11,7 @@ retrieval-side memory poisoning loop for LlamaIndex users.
 
 Provides:
 - MemgarRetriever: Trust-aware and runtime-scanned retriever for LlamaIndex
-- MemgarNodePostprocessor: Trust-based node filtering
+- MemgarNodePostprocessor: Trust-based and runtime-scanned node filtering
 - Query engine helpers
 
 Example:
@@ -70,22 +70,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
 
     Drop-in replacement that adds trust-weighted ranking, temporal decay,
     anomaly detection, and a SecureMemoryStore-backed retrieval firewall.
-
-    Example:
-        from llama_index.core import VectorStoreIndex
-
-        # Create index
-        index = VectorStoreIndex.from_documents(docs)
-        base_retriever = index.as_retriever(similarity_top_k=10)
-
-        # Wrap with Memgar
-        secure_retriever = MemgarRetriever(
-            base_retriever=base_retriever,
-            min_trust_score=0.3,
-        )
-
-        # Use in query engine
-        query_engine = index.as_query_engine(retriever=secure_retriever)
     """
 
     def __init__(
@@ -120,35 +104,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
     ):
         """
         Initialize Memgar retriever for LlamaIndex.
-
-        Args:
-            base_retriever: LlamaIndex retriever to wrap
-            min_trust_score: Minimum trust score (0-1)
-            trust_weight_factor: How much trust affects ranking
-            enable_temporal_decay: Enable time-based decay
-            decay_half_life_days: Half-life for decay
-            enable_anomaly_detection: Detect suspicious patterns
-            filter_flagged: Filter flagged documents
-            filter_high_risk: Filter high-risk documents
-            high_risk_threshold: Risk score threshold
-            similarity_top_k: Number of documents to return
-            return_metadata: Include Memgar metadata in node
-            metadata_store: Pre-populated metadata store
-            on_anomaly: Callback for anomaly detection
-            callback_manager: LlamaIndex callback manager
-            memory_guard: Optional preconfigured UniversalMemoryGuard
-            secure_store: Optional preconfigured SecureMemoryStore
-            analyzer: Optional analyzer for the SecureMemoryStore boundary
-            runtime_policy: Optional runtime policy for the secure boundary
-            policy_engine: Optional policy engine for the secure boundary
-            dlp: Optional DLP implementation for the secure boundary
-            dlp_policy: Optional DLP policy for the secure boundary
-            auditor: Optional auditor for the secure boundary
-            agent_id: Agent identifier used in retrieval audit events
-            scan_retrieval_outputs: Scan final retrieval chunks before context
-            on_retrieval_threat: Threat action for blocked retrieval chunks
-            allow_legacy_guard: Explicit escape hatch for legacy MemoryGuard
-            guard: Optional legacy MemoryGuard, requires allow_legacy_guard=True
         """
         if LLAMAINDEX_AVAILABLE:
             super().__init__(callback_manager=callback_manager)
@@ -174,7 +129,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
             default_source_type="llamaindex_retrieval",
         )
 
-        # Create trust-aware retriever
         self.trust_retriever = TrustAwareRetriever(
             retrieve_fn=self._base_retrieve,
             min_trust_score=min_trust_score,
@@ -188,7 +142,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
             top_k=similarity_top_k,
         )
 
-        # Load metadata if provided
         if metadata_store:
             for doc_id, metadata in metadata_store.items():
                 self.trust_retriever.set_metadata(doc_id, metadata)
@@ -202,7 +155,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
         """Call base retriever and convert to dict format."""
         query_bundle = QueryBundle(query_str=query) if LLAMAINDEX_AVAILABLE else query
 
-        # Get nodes from base retriever
         if hasattr(self.base_retriever, 'retrieve'):
             nodes = self.base_retriever.retrieve(query_bundle)
         elif hasattr(self.base_retriever, '_retrieve'):
@@ -210,7 +162,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
         else:
             nodes = []
 
-        # Convert to dict format for TrustAwareRetriever
         results = []
         for node_with_score in nodes[:k]:
             if hasattr(node_with_score, 'node'):
@@ -220,7 +171,6 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
                 node = node_with_score
                 score = 0.5
 
-            # Extract node info
             content = _node_content(node)
             node_id = _node_id(node, content)
 
@@ -229,29 +179,21 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
                 "doc_id": node_id,
                 "score": score,
                 "metadata": _node_metadata(node),
-                "_node": node,  # Kept for callers that also attach metadata custom_data.
+                "_node": node,
             })
 
         return results
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
-        """
-        Retrieve nodes with trust-aware ranking and runtime firewalling.
-
-        This is the main retrieval method called by LlamaIndex.
-        """
+        """Retrieve nodes with trust-aware ranking and runtime firewalling."""
         query = query_bundle.query_str if hasattr(query_bundle, 'query_str') else str(query_bundle)
 
-        # Get trust-aware results
         result = self.trust_retriever.retrieve(query, top_k=self.similarity_top_k)
 
-        # Handle anomalies
         if result.anomalies_detected > 0 and self.on_anomaly:
             self.on_anomaly(result.anomaly_details)
 
         documents = self._guard_retrieved_documents(result.documents, query=query)
-
-        # Convert back to LlamaIndex NodeWithScore
         nodes_with_scores = []
 
         for doc in documents:
@@ -381,25 +323,11 @@ class MemgarRetriever(BaseRetriever if LLAMAINDEX_AVAILABLE else object):
 
 class MemgarNodePostprocessor(BaseNodePostprocessor if LLAMAINDEX_AVAILABLE else object):
     """
-    Trust-based node postprocessor for LlamaIndex.
+    Trust-based and runtime-scanned node postprocessor for LlamaIndex.
 
-    Use when you want to keep your existing retriever but add
-    trust-based filtering as a postprocessing step.
-
-    Example:
-        from llama_index.core import VectorStoreIndex
-
-        index = VectorStoreIndex.from_documents(docs)
-
-        # Add postprocessor
-        postprocessor = MemgarNodePostprocessor(
-            min_trust_score=0.3,
-            filter_anomalous=True,
-        )
-
-        query_engine = index.as_query_engine(
-            node_postprocessors=[postprocessor]
-        )
+    Use when you want to keep your existing retriever but add trust-based
+    filtering and SecureMemoryStore-backed runtime scanning as a postprocessing
+    step before nodes enter model context.
     """
 
     def __init__(
@@ -410,18 +338,21 @@ class MemgarNodePostprocessor(BaseNodePostprocessor if LLAMAINDEX_AVAILABLE else
         metadata_key: str = "trust_score",
         enable_reranking: bool = True,
         trust_weight: float = 0.3,
+        memory_guard: Optional[UniversalMemoryGuard] = None,
+        secure_store: Optional[Any] = None,
+        analyzer: Optional[Any] = None,
+        runtime_policy: Optional[Any] = None,
+        policy_engine: Optional[Any] = None,
+        dlp: Optional[Any] = None,
+        dlp_policy: Optional[Any] = None,
+        auditor: Optional[Any] = None,
+        agent_id: str = "llamaindex",
+        scan_retrieval_outputs: bool = True,
+        on_retrieval_threat: str = "drop",
+        allow_legacy_guard: bool = False,
+        guard: Optional[Any] = None,
     ):
-        """
-        Initialize postprocessor.
-
-        Args:
-            min_trust_score: Minimum trust score to keep
-            filter_anomalous: Filter anomalous nodes
-            filter_flagged: Filter flagged nodes
-            metadata_key: Key for trust score in node metadata
-            enable_reranking: Rerank based on trust
-            trust_weight: Weight for trust in reranking
-        """
+        """Initialize postprocessor."""
         if LLAMAINDEX_AVAILABLE:
             super().__init__()
 
@@ -431,36 +362,45 @@ class MemgarNodePostprocessor(BaseNodePostprocessor if LLAMAINDEX_AVAILABLE else
         self.metadata_key = metadata_key
         self.enable_reranking = enable_reranking
         self.trust_weight = trust_weight
+        self.agent_id = agent_id
+        self.scan_retrieval_outputs = scan_retrieval_outputs
+        self.memory_guard = memory_guard or UniversalMemoryGuard(
+            guard=guard,
+            secure_store=secure_store,
+            analyzer=analyzer,
+            runtime_policy=runtime_policy,
+            policy_engine=policy_engine,
+            dlp=dlp,
+            dlp_policy=dlp_policy,
+            auditor=auditor,
+            agent_id=agent_id,
+            allow_legacy_guard=allow_legacy_guard,
+            on_read_threat=on_retrieval_threat,
+            default_source_type="llamaindex_postprocessor",
+        )
 
     def _postprocess_nodes(
         self,
         nodes: List[NodeWithScore],
         query_bundle: Optional[QueryBundle] = None,
     ) -> List[NodeWithScore]:
-        """Postprocess nodes with trust filtering."""
+        """Postprocess nodes with trust filtering and runtime firewalling."""
         filtered_nodes = []
 
         for node_with_score in nodes:
             node = node_with_score.node
             score = node_with_score.score or 0.5
 
-            # Get trust score from metadata
-            metadata = node.metadata if hasattr(node, 'metadata') else {}
+            metadata = _node_metadata(node)
             trust_score = metadata.get(self.metadata_key, 0.5)
 
-            # Filter by trust
             if trust_score < self.min_trust_score:
                 continue
-
-            # Filter flagged
             if self.filter_flagged and metadata.get("flagged", False):
                 continue
-
-            # Filter anomalous
             if self.filter_anomalous and metadata.get("is_anomalous", False):
                 continue
 
-            # Calculate adjusted score
             if self.enable_reranking:
                 adjusted_score = score * (
                     1 - self.trust_weight +
@@ -469,19 +409,62 @@ class MemgarNodePostprocessor(BaseNodePostprocessor if LLAMAINDEX_AVAILABLE else
             else:
                 adjusted_score = score
 
-            # Create new node with adjusted score
             filtered_nodes.append(_make_node_with_score(
                 node=node,
                 score=adjusted_score,
             ))
 
-        # Sort by adjusted score
         if self.enable_reranking:
             filtered_nodes.sort(key=lambda x: x.score or 0, reverse=True)
 
-        return filtered_nodes
+        query = query_bundle.query_str if hasattr(query_bundle, 'query_str') else str(query_bundle or "")
+        return self._guard_nodes(filtered_nodes, query=query)
 
-    # Alias for compatibility
+    def _guard_nodes(self, nodes: List[NodeWithScore], *, query: str) -> List[NodeWithScore]:
+        if not self.scan_retrieval_outputs or not nodes:
+            return nodes
+
+        records = []
+        for index, node_with_score in enumerate(nodes):
+            node = node_with_score.node
+            content = _node_content(node)
+            records.append({
+                "content": content,
+                "metadata": _node_metadata(node),
+                "doc_id": _node_id(node, content),
+                "_memgar_index": index,
+            })
+
+        safe_records = self.memory_guard.guard_retrieval_results(
+            records,
+            query=query,
+            top_k=len(records),
+            source_type="llamaindex_postprocessor",
+            agent_id=self.agent_id,
+        )
+
+        safe_nodes: List[NodeWithScore] = []
+        for record in safe_records:
+            if not isinstance(record, dict):
+                continue
+            index = record.get("_memgar_index")
+            if index is None or index >= len(nodes):
+                continue
+            original = nodes[index]
+            original_node = original.node
+            original_content = _node_content(original_node)
+            safe_content = _record_content(record, fallback=original_content)
+            if safe_content == original_content:
+                safe_node = original_node
+            else:
+                safe_node = _make_text_node(
+                    safe_content,
+                    _node_id(original_node, original_content),
+                    _node_metadata(original_node),
+                )
+            safe_nodes.append(_make_node_with_score(node=safe_node, score=original.score or 0.5))
+        return safe_nodes
+
     def postprocess_nodes(
         self,
         nodes: List[NodeWithScore],
@@ -503,21 +486,7 @@ def create_secure_query_engine(
     on_anomaly: Optional[Callable] = None,
     **guard_kwargs: Any,
 ) -> Any:
-    """
-    Create a trust-aware query engine.
-
-    Example:
-        from llama_index.core import VectorStoreIndex
-
-        index = VectorStoreIndex.from_documents(docs)
-        engine = create_secure_query_engine(
-            index=index,
-            min_trust_score=0.4,
-        )
-
-        response = engine.query("What is our policy?")
-    """
-    # Create Memgar retriever
+    """Create a trust-aware query engine."""
     base_retriever = index.as_retriever(similarity_top_k=similarity_top_k * 2)
     secure_retriever = MemgarRetriever(
         base_retriever=base_retriever,
@@ -527,7 +496,6 @@ def create_secure_query_engine(
         **guard_kwargs,
     )
 
-    # Create query engine with secure retriever
     query_engine = index.as_query_engine(
         retriever=secure_retriever,
         response_mode=response_mode,
@@ -544,18 +512,7 @@ def create_secure_chat_engine(
     on_anomaly: Optional[Callable] = None,
     **guard_kwargs: Any,
 ) -> Any:
-    """
-    Create a trust-aware chat engine.
-
-    Example:
-        engine = create_secure_chat_engine(
-            index=index,
-            min_trust_score=0.4,
-        )
-
-        response = engine.chat("Hello!")
-    """
-    # Create Memgar retriever
+    """Create a trust-aware chat engine."""
     base_retriever = index.as_retriever(similarity_top_k=similarity_top_k * 2)
     secure_retriever = MemgarRetriever(
         base_retriever=base_retriever,
@@ -565,7 +522,6 @@ def create_secure_chat_engine(
         **guard_kwargs,
     )
 
-    # Create chat engine
     chat_engine = index.as_chat_engine(
         retriever=secure_retriever,
         chat_mode=chat_mode,
