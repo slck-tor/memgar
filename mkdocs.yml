@@ -11,7 +11,7 @@ theme:
   name: material
   font:
     text: Inter
-    code: JetBrains Mono
+    code: Geist Mono
   logo: assets/logo.svg
   favicon: assets/favicon.svg
   features:
@@ -37,20 +37,20 @@ theme:
     - search.suggest
     - toc.follow
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      accent: deep purple
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
-      accent: deep purple
+      primary: black
+      accent: indigo
       toggle:
         icon: material/weather-night
         name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
   icon:
     repo: fontawesome/brands/github
     edit: material/pencil
