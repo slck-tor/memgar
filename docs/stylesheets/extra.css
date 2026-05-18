@@ -1,178 +1,500 @@
-/* Memgar brand customisation on top of mkdocs-material. */
+/* ─────────────────────────────────────────────────────────────────────────
+   Memgar docs — Vercel / Linear inspired dark monochrome theme
 
-:root {
-  --md-primary-fg-color:        #5e35b1;
-  --md-primary-fg-color--light: #7e57c2;
-  --md-primary-fg-color--dark:  #4527a0;
-  --md-accent-fg-color:         #7e57c2;
+   Design decisions:
+   - Dark by default, light mode mirrors the same monochrome aesthetic
+   - Near-black canvas (#0a0a0a) with thin neutral borders (#1f1f1f)
+   - Single low-saturation accent (Linear-ish indigo), used sparingly
+   - Typography: Inter for everything, Geist Mono for code
+   - No gradient buttons, no shadow stacks — flat, sharp, technical
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-md-color-scheme="default"] {
+    --memgar-bg: #ffffff;
+    --memgar-bg-elevated: #fafafa;
+    --memgar-border: #e5e5e5;
+    --memgar-border-strong: #d4d4d4;
+    --memgar-fg: #0a0a0a;
+    --memgar-fg-muted: #525252;
+    --memgar-fg-dim: #737373;
+    --memgar-accent: #5e6ad2;
+    --memgar-accent-hover: #4752c4;
 }
 
-/* Hero section on landing page */
+[data-md-color-scheme="slate"] {
+    --memgar-bg: #0a0a0a;
+    --memgar-bg-elevated: #111111;
+    --memgar-border: #1f1f1f;
+    --memgar-border-strong: #2a2a2a;
+    --memgar-fg: #ededed;
+    --memgar-fg-muted: #a3a3a3;
+    --memgar-fg-dim: #737373;
+    --memgar-accent: #8b95e8;
+    --memgar-accent-hover: #b1b9f0;
+}
+
+/* ─── Material overrides per scheme ───────────────────────────────────── */
+
+[data-md-color-scheme="slate"] {
+    --md-default-bg-color: var(--memgar-bg);
+    --md-default-fg-color: var(--memgar-fg);
+    --md-default-fg-color--light: var(--memgar-fg-muted);
+    --md-default-fg-color--lighter: var(--memgar-fg-dim);
+    --md-code-bg-color: #0e0e0e;
+    --md-code-fg-color: #ededed;
+    --md-typeset-a-color: var(--memgar-accent);
+    --md-primary-fg-color: var(--memgar-fg);
+    --md-primary-fg-color--dark: var(--memgar-fg);
+    --md-primary-bg-color: var(--memgar-bg);
+    --md-accent-fg-color: var(--memgar-accent);
+    --md-footer-bg-color: var(--memgar-bg);
+    --md-footer-bg-color--dark: var(--memgar-bg);
+    --md-footer-fg-color: var(--memgar-fg-muted);
+}
+
+[data-md-color-scheme="slate"] body {
+    background: var(--memgar-bg);
+    color: var(--memgar-fg);
+}
+
+/* Tighter, denser typography */
+:root {
+    --md-text-font: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    --md-code-font: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+[data-md-color-scheme="slate"] .md-typeset {
+    letter-spacing: -0.005em;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2,
+[data-md-color-scheme="slate"] .md-typeset h3 {
+    letter-spacing: -0.02em;
+    font-weight: 600;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h1 {
+    font-size: 2.25rem;
+    line-height: 1.15;
+}
+
+[data-md-color-scheme="slate"] .md-typeset h2 {
+    font-size: 1.5rem;
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--memgar-border);
+}
+
+/* Header — flat, minimal, glass */
+[data-md-color-scheme="slate"] .md-header {
+    background: rgba(10, 10, 10, 0.7);
+    backdrop-filter: saturate(150%) blur(20px);
+    -webkit-backdrop-filter: saturate(150%) blur(20px);
+    border-bottom: 1px solid var(--memgar-border);
+    box-shadow: none;
+}
+
+[data-md-color-scheme="slate"] .md-header__title {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+[data-md-color-scheme="slate"] .md-tabs {
+    background: transparent;
+    border-bottom: 1px solid var(--memgar-border);
+}
+
+[data-md-color-scheme="slate"] .md-tabs__link {
+    color: var(--memgar-fg-muted);
+    opacity: 1;
+    font-weight: 500;
+}
+
+[data-md-color-scheme="slate"] .md-tabs__link--active,
+[data-md-color-scheme="slate"] .md-tabs__link:hover {
+    color: var(--memgar-fg);
+}
+
+[data-md-color-scheme="slate"] .md-nav__link {
+    color: var(--memgar-fg-muted);
+}
+
+[data-md-color-scheme="slate"] .md-nav__link--active,
+[data-md-color-scheme="slate"] .md-nav__link:focus,
+[data-md-color-scheme="slate"] .md-nav__link:hover {
+    color: var(--memgar-fg);
+}
+
+[data-md-color-scheme="slate"] .md-footer,
+[data-md-color-scheme="slate"] .md-footer-meta {
+    background: var(--memgar-bg);
+    border-top: 1px solid var(--memgar-border);
+}
+
+/* ─── Hero ────────────────────────────────────────────────────────────── */
+
 .memgar-hero {
-  text-align: center;
-  padding: 4rem 1rem 3rem;
-  margin: -1.5rem -1rem 2rem;
-  background: linear-gradient(
-    135deg,
-    rgba(94, 53, 177, 0.08) 0%,
-    rgba(126, 87, 194, 0.04) 50%,
-    transparent 100%
-  );
-  border-radius: 0;
-  position: relative;
-  overflow: hidden;
+    padding: 6rem 0 3rem;
+    text-align: left;
+    position: relative;
+    overflow: hidden;
 }
 
 .memgar-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image:
-    radial-gradient(circle at 20% 30%, rgba(126, 87, 194, 0.10) 0, transparent 40%),
-    radial-gradient(circle at 80% 70%, rgba(94, 53, 177, 0.10) 0, transparent 40%);
-  pointer-events: none;
-  z-index: 0;
+    content: "";
+    position: absolute;
+    top: -200px;
+    left: -100px;
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(
+        circle,
+        rgba(94, 106, 210, 0.08) 0%,
+        transparent 70%
+    );
+    pointer-events: none;
 }
 
-.memgar-hero > * {
-  position: relative;
-  z-index: 1;
+[data-md-color-scheme="slate"] .memgar-hero::before {
+    background: radial-gradient(
+        circle,
+        rgba(139, 149, 232, 0.12) 0%,
+        transparent 70%
+    );
 }
 
 .memgar-hero h1 {
-  font-size: 2.75rem;
-  line-height: 1.15;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin: 0.5rem 0 1.5rem;
-  background: linear-gradient(
-    90deg,
-    var(--md-primary-fg-color) 0%,
-    var(--md-primary-fg-color--light) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+    font-size: clamp(2.5rem, 5vw, 3.5rem) !important;
+    line-height: 1.05 !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.03em !important;
+    margin-top: 0 !important;
+    margin-bottom: 1rem !important;
+    color: var(--memgar-fg);
+    max-width: 800px;
+}
+
+.memgar-hero h1::after {
+    content: none;
 }
 
 .memgar-hero p {
-  font-size: 1.15rem;
-  line-height: 1.6;
-  max-width: 720px;
-  margin: 0 auto 1.5rem;
-  color: var(--md-default-fg-color--light);
+    font-size: 1.0625rem;
+    color: var(--memgar-fg-muted);
+    max-width: 640px;
+    line-height: 1.6;
+    margin-bottom: 2rem;
 }
 
-.memgar-hero .md-button {
-  margin: 0.4rem 0.3rem;
+.memgar-hero strong {
+    color: var(--memgar-fg);
+    font-weight: 500;
 }
 
-/* Stats strip */
-.memgar-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1.5rem;
-  margin: 3rem 0;
-  padding: 2rem 0;
-  border-top: 1px solid var(--md-default-fg-color--lightest);
-  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+/* Pill row above headline */
+.memgar-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--memgar-border-strong);
+    border-radius: 100px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--memgar-fg-muted);
+    margin-bottom: 1.5rem;
+    background: var(--memgar-bg-elevated);
 }
 
-.memgar-stat {
-  text-align: center;
-}
-
-.memgar-stat strong {
-  display: block;
-  font-size: 2.25rem;
-  font-weight: 800;
-  line-height: 1;
-  margin-bottom: 0.4rem;
-  background: linear-gradient(
-    90deg,
-    var(--md-primary-fg-color) 0%,
-    var(--md-primary-fg-color--light) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
-.memgar-stat span {
-  font-size: 0.875rem;
-  color: var(--md-default-fg-color--light);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-/* Make code blocks more compact */
-.md-typeset pre > code {
-  font-size: 0.85em;
-  line-height: 1.5;
-}
-
-/* Cards grid spacing */
-.md-typeset .grid.cards {
-  gap: 1rem;
-  margin: 1.5rem 0;
-}
-
-.md-typeset .grid.cards > ul > li {
-  border-radius: 12px;
-  padding: 1.5rem;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-
-.md-typeset .grid.cards > ul > li:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(94, 53, 177, 0.12);
-}
-
-/* Comparison table */
-.md-typeset table {
-  font-size: 0.9rem;
-}
-
-.md-typeset table th {
-  background: var(--md-primary-fg-color);
-  color: white;
-  font-weight: 600;
+.memgar-eyebrow .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--memgar-accent);
+    box-shadow: 0 0 8px var(--memgar-accent);
 }
 
 /* Buttons */
-.md-typeset .md-button {
-  border-radius: 8px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
+.memgar-hero .md-button,
+.memgar-cta .md-button {
+    border: 1px solid var(--memgar-border-strong);
+    background: transparent;
+    color: var(--memgar-fg) !important;
+    font-weight: 500;
+    padding: 0.625rem 1.25rem;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+    box-shadow: none;
+    text-transform: none;
+    letter-spacing: 0;
 }
 
-.md-typeset .md-button--primary {
-  background: var(--md-primary-fg-color);
-  border-color: var(--md-primary-fg-color);
+.memgar-hero .md-button:hover,
+.memgar-cta .md-button:hover {
+    background: var(--memgar-bg-elevated);
+    border-color: var(--memgar-fg-muted);
 }
 
-.md-typeset .md-button--primary:hover {
-  background: var(--md-primary-fg-color--dark);
-  border-color: var(--md-primary-fg-color--dark);
+.memgar-hero .md-button--primary,
+.memgar-cta .md-button--primary {
+    background: var(--memgar-fg);
+    color: var(--memgar-bg) !important;
+    border-color: var(--memgar-fg);
 }
 
-/* Mermaid diagrams */
-.mermaid {
-  text-align: center;
+.memgar-hero .md-button--primary:hover,
+.memgar-cta .md-button--primary:hover {
+    background: var(--memgar-fg-muted);
+    color: var(--memgar-bg) !important;
 }
 
-/* Mobile tweaks */
+/* ─── Stats strip ─────────────────────────────────────────────────────── */
+
+.memgar-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0;
+    margin: 3rem 0;
+    border-top: 1px solid var(--memgar-border);
+    border-bottom: 1px solid var(--memgar-border);
+}
+
+.memgar-stat {
+    padding: 1.5rem;
+    border-right: 1px solid var(--memgar-border);
+    text-align: left;
+}
+
+.memgar-stat:last-child {
+    border-right: none;
+}
+
+.memgar-stat p {
+    margin: 0;
+}
+
+.memgar-stat strong {
+    display: block;
+    font-size: 1.875rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1;
+    color: var(--memgar-fg);
+    font-feature-settings: "tnum", "lnum";
+}
+
+.memgar-stat-label {
+    display: block;
+    font-size: 0.8125rem;
+    color: var(--memgar-fg-muted);
+    margin-top: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+/* ─── Feature cards ───────────────────────────────────────────────────── */
+
+.grid.cards > ul {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    padding: 0;
+    list-style: none;
+}
+
+.grid.cards > ul > li {
+    border: 1px solid var(--memgar-border) !important;
+    background: transparent !important;
+    border-radius: 8px !important;
+    padding: 1.25rem !important;
+    transition: border-color 0.15s ease, background 0.15s ease !important;
+    box-shadow: none !important;
+}
+
+.grid.cards > ul > li:hover {
+    border-color: var(--memgar-border-strong) !important;
+    background: var(--memgar-bg-elevated) !important;
+    transform: none !important;
+}
+
+.grid.cards > ul > li > h2,
+.grid.cards > ul > li > h3,
+.grid.cards strong {
+    color: var(--memgar-fg) !important;
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0.5rem !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+.grid.cards p {
+    color: var(--memgar-fg-muted);
+    font-size: 0.9375rem;
+    line-height: 1.55;
+}
+
+/* ─── Tables ──────────────────────────────────────────────────────────── */
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
+    border: 1px solid var(--memgar-border);
+    background: transparent;
+    font-size: 0.9rem;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+    background: var(--memgar-bg-elevated);
+    color: var(--memgar-fg);
+    border-bottom: 1px solid var(--memgar-border);
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) td {
+    border-top: 1px solid var(--memgar-border);
+}
+
+/* ─── Code ────────────────────────────────────────────────────────────── */
+
+[data-md-color-scheme="slate"] .md-typeset code {
+    background: rgba(255, 255, 255, 0.06);
+    color: #d4d4d4;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.875em;
+    border: 1px solid var(--memgar-border);
+}
+
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .highlight,
+[data-md-color-scheme="slate"] .md-typeset pre {
+    background: #0e0e0e;
+    border: 1px solid var(--memgar-border);
+    border-radius: 8px;
+}
+
+[data-md-color-scheme="slate"] .highlight .filename {
+    background: var(--memgar-bg-elevated);
+    color: var(--memgar-fg-muted);
+    border-bottom: 1px solid var(--memgar-border);
+    font-family: var(--md-code-font);
+    font-size: 0.8125rem;
+}
+
+/* ─── Admonitions ─────────────────────────────────────────────────────── */
+
+[data-md-color-scheme="slate"] .md-typeset .admonition,
+[data-md-color-scheme="slate"] .md-typeset details {
+    border: 1px solid var(--memgar-border);
+    border-radius: 8px;
+    background: var(--memgar-bg-elevated);
+    box-shadow: none;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .admonition-title {
+    background: transparent;
+    border-bottom: 1px solid var(--memgar-border);
+    color: var(--memgar-fg);
+    font-weight: 600;
+}
+
+/* Tag chips */
+[data-md-color-scheme="slate"] .md-tag {
+    background: var(--memgar-bg-elevated);
+    border: 1px solid var(--memgar-border);
+    color: var(--memgar-fg-muted);
+    border-radius: 100px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+
+/* Search */
+[data-md-color-scheme="slate"] .md-search__form {
+    background: var(--memgar-bg-elevated);
+    border: 1px solid var(--memgar-border);
+    border-radius: 8px;
+}
+
+[data-md-color-scheme="slate"] .md-search__form:hover,
+[data-md-color-scheme="slate"] .md-search__form:focus-within {
+    border-color: var(--memgar-border-strong);
+}
+
+/* ─── Section eyebrow text ────────────────────────────────────────────── */
+
+.memgar-section-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--memgar-fg-muted);
+    margin-bottom: 0.5rem;
+}
+
+/* CTA strip at bottom */
+.memgar-cta {
+    margin: 4rem 0 2rem;
+    padding: 3rem;
+    border: 1px solid var(--memgar-border);
+    border-radius: 12px;
+    text-align: center;
+    background:
+        radial-gradient(circle at top, rgba(139, 149, 232, 0.06), transparent 60%);
+}
+
+[data-md-color-scheme="default"] .memgar-cta {
+    background:
+        radial-gradient(circle at top, rgba(94, 106, 210, 0.04), transparent 60%);
+}
+
+.memgar-cta h2 {
+    border: none !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    font-size: 1.875rem !important;
+}
+
+/* Honest-pitch micro-text */
+.memgar-honest {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--memgar-fg-dim);
+    border-left: 2px solid var(--memgar-border-strong);
+    background: var(--memgar-bg-elevated);
+    border-radius: 0 4px 4px 0;
+    max-width: 720px;
+}
+
+.memgar-honest strong {
+    color: var(--memgar-fg-muted);
+}
+
+/* Mobile */
 @media (max-width: 768px) {
-  .memgar-hero {
-    padding: 2.5rem 1rem 2rem;
-  }
-  .memgar-hero h1 {
-    font-size: 2rem;
-  }
-  .memgar-hero p {
-    font-size: 1rem;
-  }
-  .memgar-stat strong {
-    font-size: 1.75rem;
-  }
+    .memgar-hero {
+        padding: 3rem 0 2rem;
+    }
+    .memgar-hero h1 {
+        font-size: 2rem !important;
+    }
+    .memgar-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .memgar-stat {
+        border-right: none;
+        border-bottom: 1px solid var(--memgar-border);
+    }
 }
