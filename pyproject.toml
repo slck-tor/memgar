@@ -117,6 +117,11 @@ server = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",
 ]
+cloud = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "pydantic>=2.0.0",
+]
 gateway = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.23.0",

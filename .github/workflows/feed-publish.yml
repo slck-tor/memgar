@@ -1,0 +1,147 @@
+name: Threat Feed Publish
+
+# Weekly automatic publish of the signed threat-intelligence feed bundle as a
+# GitHub Release asset. Manual `workflow_dispatch` available for off-cycle
+# pushes after pattern additions or zero-day signatures.
+#
+# Requires repository secrets:
+#   MEMGAR_FEED_PRIVATE_KEY_PEM   Ed25519 private key (PEM, base64 encoded)
+#
+# The corresponding public key is hard-coded at
+# `memgar/feed/verifier.py::FEED_PUBLIC_KEY_B64` and verified by every
+# client on download.
+
+on:
+  schedule:
+    # Every Monday 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'SemVer bump: patch | minor | major'
+        required: true
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major]
+      release_notes:
+        description: 'One-line summary for CHANGELOG-FEED.md'
+        required: false
+        type: string
+
+permissions:
+  contents: write   # needed to create releases and push CHANGELOG-FEED.md
+
+concurrency:
+  group: feed-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Sign + release feed bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # need history to compute pattern-delta since last release
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install memgar (feed extras)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[feed]"
+
+      - name: Decode private key
+        env:
+          MEMGAR_FEED_PRIVATE_KEY_PEM: ${{ secrets.MEMGAR_FEED_PRIVATE_KEY_PEM }}
+        run: |
+          if [ -z "${MEMGAR_FEED_PRIVATE_KEY_PEM}" ]; then
+            echo "::error::MEMGAR_FEED_PRIVATE_KEY_PEM secret is not set" >&2
+            exit 1
+          fi
+          echo "${MEMGAR_FEED_PRIVATE_KEY_PEM}" | base64 -d > /tmp/feed_private.pem
+          chmod 600 /tmp/feed_private.pem
+
+      - name: Compute next feed version
+        id: version
+        run: |
+          python scripts/feed_version.py \
+            --bump "${{ github.event.inputs.version_bump || 'patch' }}" \
+            --output-env >> "$GITHUB_OUTPUT"
+
+      - name: Build + sign bundle
+        run: |
+          python scripts/publish_feed.py \
+            --patterns-file memgar/patterns.py \
+            --private-key-file /tmp/feed_private.pem \
+            --output-dir dist/ \
+            --feed-version "${{ steps.version.outputs.next_version }}"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          python scripts/feed_changelog.py \
+            --new-version "${{ steps.version.outputs.next_version }}" \
+            --notes "${{ github.event.inputs.release_notes }}" \
+            --output /tmp/release_notes.md
+          {
+            echo 'body<<EOF'
+            cat /tmp/release_notes.md
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify bundle locally before publish
+        run: |
+          python -c "
+          import gzip, json
+          from memgar.feed.verifier import FeedVerifier
+          import base64
+          with gzip.open('dist/memgar-feed.json.gz', 'rb') as f:
+              raw = f.read()
+          bundle = json.loads(raw.decode())
+          sig = bundle['manifest']['signature_b64']
+          # Re-canonicalise the patterns part to verify signature
+          patterns_canonical = json.dumps(bundle['patterns'], sort_keys=True, separators=(',', ':')).encode()
+          ok = FeedVerifier().verify(patterns_canonical, sig)
+          print(f'Bundle verified: {ok}')
+          assert ok, 'Local verification failed — refusing to publish'
+          "
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: feed-v${{ steps.version.outputs.next_version }}
+          name: "Threat Feed v${{ steps.version.outputs.next_version }}"
+          body: ${{ steps.notes.outputs.body }}
+          files: dist/memgar-feed.json.gz
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+      - name: Commit updated bundle + changelog to repo
+        run: |
+          cp dist/memgar-feed.json.gz feeds/memgar-feed.json.gz
+          git config user.name "memgar-feed-bot"
+          git config user.email "feed@memgar.com"
+          git add feeds/memgar-feed.json.gz CHANGELOG-FEED.md
+          if git diff --cached --quiet; then
+            echo "No bundle change to commit"
+          else
+            git commit -m "chore(feed): publish v${{ steps.version.outputs.next_version }}"
+            git push
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Threat Feed v${{ steps.version.outputs.next_version }} published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/feed-v${{ steps.version.outputs.next_version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/release_notes.md >> "$GITHUB_STEP_SUMMARY"
