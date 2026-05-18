@@ -307,3 +307,62 @@ class TestReplay:
             ["memory", "replay", vault_db["path"], "--since", "not-a-date"],
         )
         assert result.exit_code == 1
+
+
+class TestTrace:
+    def test_trace_unknown_entry_exits_1(self, runner, vault_db):
+        result = runner.invoke(
+            main, ["memory", "trace", vault_db["path"], "missing"]
+        )
+        assert result.exit_code == 1
+
+    def test_trace_finds_entry_provenance(self, runner, vault_db):
+        result = runner.invoke(
+            main, ["memory", "trace", vault_db["path"], "src:u3", "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["found"] is True
+        assert payload["appearance"]["entry_id"] == "src:u3"
+        # u3 appears in snap_b and snap_c → 2 snapshots
+        assert payload["appearance"]["snapshots_seen"] == 2
+        assert len(payload["lineage"]) >= 1
+
+    def test_trace_pretty_output_renders(self, runner, vault_db):
+        result = runner.invoke(
+            main, ["memory", "trace", vault_db["path"], "src:u3"]
+        )
+        assert result.exit_code == 0
+        assert "Memory Trace" in result.output
+        assert "src:u3" in result.output
+
+
+class TestCohort:
+    def test_cohort_groups_by_source_id(self, runner, vault_db):
+        result = runner.invoke(
+            main,
+            ["memory", "cohort", vault_db["path"], "u1", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        eids = {m["entry_id"] for m in payload["members"]}
+        assert "src:u1" in eids
+
+    def test_cohort_groups_by_source_type(self, runner, vault_db):
+        result = runner.invoke(
+            main,
+            ["memory", "cohort", vault_db["path"], "user", "--attr", "source_type", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        # All three fixture entries have source_type='user'
+        assert payload["member_count"] >= 3
+
+    def test_cohort_unknown_value_renders_empty(self, runner, vault_db):
+        result = runner.invoke(
+            main,
+            ["memory", "cohort", vault_db["path"], "nobody-here", "--json"],
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["member_count"] == 0

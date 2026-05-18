@@ -143,6 +143,7 @@ nav:
           - Overview: architecture/overview.md
           - 4-Layer Pipeline: architecture/pipeline.md
           - Corpus Tiers: architecture/corpus.md
+          - Integrity & Forensics: architecture/integrity.md
       - Integration:
           - Basic Usage: integration/basic.md
           - LangChain: integration/langchain.md

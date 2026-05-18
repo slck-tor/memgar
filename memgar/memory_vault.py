@@ -78,6 +78,7 @@ class VaultSnapshot:
     signature: str = ""
     signed: bool = False
     signature_version: int = SIGNATURE_VERSION
+    merkle_root: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -90,6 +91,7 @@ class VaultSnapshot:
             "signature": self.signature,
             "signed": self.signed,
             "signature_version": self.signature_version,
+            "merkle_root": self.merkle_root,
         }
 
     @classmethod
@@ -104,7 +106,23 @@ class VaultSnapshot:
             signature=data.get("signature", ""),
             signed=bool(data.get("signed", False)),
             signature_version=int(data.get("signature_version", 1)),
+            merkle_root=data.get("merkle_root", ""),
         )
+
+    def merkle_tree(self):
+        """Build a `MerkleTree` over this snapshot's entries (lazy, no caching)."""
+        from memgar.merkle import MerkleTree
+
+        return MerkleTree(
+            (eid, entry.content_hash) for eid, entry in self.entries.items()
+        )
+
+    def merkle_proof(self, entry_id: str):
+        """Build an inclusion `MerkleProof` for `entry_id` in this snapshot.
+
+        Raises KeyError if `entry_id` is not in the snapshot.
+        """
+        return self.merkle_tree().prove(entry_id)
 
 
 @dataclass
@@ -333,8 +351,13 @@ class MemoryVault:
             return self._live.pop(entry_id, None) is not None
 
     def take_snapshot(self, label: str = "") -> VaultSnapshot:
+        from memgar.merkle import MerkleTree
+
         with self._lock:
             entries = {key: SnapshotEntry.from_dict(value.to_dict()) for key, value in self._live.items()}
+        merkle_root = MerkleTree(
+            (eid, entry.content_hash) for eid, entry in entries.items()
+        ).root
         snapshot = VaultSnapshot(
             id=str(uuid.uuid4()),
             label=label or f"snapshot-{int(time.time())}",
@@ -345,6 +368,7 @@ class MemoryVault:
             signature="",
             signed=False,
             signature_version=SIGNATURE_VERSION,
+            merkle_root=merkle_root,
         )
         if self._signing_key is not None:
             signature = _sign(_snapshot_signature_payload(snapshot), self._signing_key)
