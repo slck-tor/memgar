@@ -1,52 +1,59 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   Memgar docs — Vercel / Linear inspired dark monochrome theme
+   Memgar docs — Obsidian.md inspired dark + violet theme
 
-   Design decisions:
-   - Dark by default, light mode mirrors the same monochrome aesthetic
-   - Near-black canvas (#0a0a0a) with thin neutral borders (#1f1f1f)
-   - Single low-saturation accent (Linear-ish indigo), used sparingly
-   - Typography: Inter for everything, Geist Mono for code
-   - No gradient buttons, no shadow stacks — flat, sharp, technical
+   Pulled from obsidian.md design language:
+   - Deep near-black canvas with subtle violet undertones (#0d0c10)
+   - Vivid violet accent (#a855f7) for CTAs, links, and glow effects
+   - Gradient brand text on headlines
+   - Cards with subtle borders + low-opacity violet glow on hover
+   - Bold tracked-tight headlines, "second brain" punchy tagline style
+   - Solid filled buttons (no outlines), strong contrast
    ───────────────────────────────────────────────────────────────────────── */
 
 :root,
 [data-md-color-scheme="default"] {
     --memgar-bg: #ffffff;
-    --memgar-bg-elevated: #fafafa;
-    --memgar-border: #e5e5e5;
-    --memgar-border-strong: #d4d4d4;
-    --memgar-fg: #0a0a0a;
-    --memgar-fg-muted: #525252;
-    --memgar-fg-dim: #737373;
-    --memgar-accent: #5e6ad2;
-    --memgar-accent-hover: #4752c4;
+    --memgar-bg-elevated: #faf9fc;
+    --memgar-bg-card: #ffffff;
+    --memgar-border: #e9e7ef;
+    --memgar-border-strong: #d4d0e0;
+    --memgar-fg: #1c1b22;
+    --memgar-fg-muted: #4a4858;
+    --memgar-fg-dim: #6e6b7e;
+    --memgar-accent: #7c3aed;
+    --memgar-accent-hover: #6d28d9;
+    --memgar-accent-glow: rgba(124, 58, 237, 0.15);
+    --memgar-accent-text: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
 }
 
 [data-md-color-scheme="slate"] {
-    --memgar-bg: #0a0a0a;
-    --memgar-bg-elevated: #111111;
-    --memgar-border: #1f1f1f;
-    --memgar-border-strong: #2a2a2a;
-    --memgar-fg: #ededed;
-    --memgar-fg-muted: #a3a3a3;
-    --memgar-fg-dim: #737373;
-    --memgar-accent: #8b95e8;
-    --memgar-accent-hover: #b1b9f0;
+    --memgar-bg: #0d0c10;
+    --memgar-bg-elevated: #1a1822;
+    --memgar-bg-card: #15131c;
+    --memgar-border: #26242f;
+    --memgar-border-strong: #35323f;
+    --memgar-fg: #f3f1f7;
+    --memgar-fg-muted: #b8b6c4;
+    --memgar-fg-dim: #8e8b9c;
+    --memgar-accent: #a855f7;
+    --memgar-accent-hover: #c084fc;
+    --memgar-accent-glow: rgba(168, 85, 247, 0.18);
+    --memgar-accent-text: linear-gradient(135deg, #a855f7 0%, #d8b4fe 100%);
 }
 
-/* ─── Material overrides per scheme ───────────────────────────────────── */
+/* ─── Material variable overrides ─────────────────────────────────────── */
 
 [data-md-color-scheme="slate"] {
     --md-default-bg-color: var(--memgar-bg);
     --md-default-fg-color: var(--memgar-fg);
     --md-default-fg-color--light: var(--memgar-fg-muted);
     --md-default-fg-color--lighter: var(--memgar-fg-dim);
-    --md-code-bg-color: #0e0e0e;
-    --md-code-fg-color: #ededed;
+    --md-code-bg-color: #15131c;
+    --md-code-fg-color: #f3f1f7;
     --md-typeset-a-color: var(--memgar-accent);
-    --md-primary-fg-color: var(--memgar-fg);
-    --md-primary-fg-color--dark: var(--memgar-fg);
-    --md-primary-bg-color: var(--memgar-bg);
+    --md-primary-fg-color: var(--memgar-bg);
+    --md-primary-fg-color--dark: var(--memgar-bg);
+    --md-primary-bg-color: var(--memgar-fg);
     --md-accent-fg-color: var(--memgar-accent);
     --md-footer-bg-color: var(--memgar-bg);
     --md-footer-bg-color--dark: var(--memgar-bg);
@@ -58,48 +65,87 @@
     color: var(--memgar-fg);
 }
 
-/* Tighter, denser typography */
+/* Global violet glow on the body (subtle radial — Obsidian signature) */
+[data-md-color-scheme="slate"] .md-main {
+    position: relative;
+}
+
+[data-md-color-scheme="slate"] .md-main::before {
+    content: "";
+    position: fixed;
+    top: -300px;
+    right: -300px;
+    width: 800px;
+    height: 800px;
+    background: radial-gradient(
+        circle,
+        rgba(168, 85, 247, 0.08) 0%,
+        transparent 60%
+    );
+    pointer-events: none;
+    z-index: 0;
+}
+
+[data-md-color-scheme="slate"] .md-content,
+[data-md-color-scheme="slate"] .md-sidebar,
+[data-md-color-scheme="slate"] .md-header {
+    position: relative;
+    z-index: 1;
+}
+
+/* Typography */
 :root {
     --md-text-font: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
         "Segoe UI", sans-serif;
-    --md-code-font: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+    --md-code-font: "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
 }
 
 [data-md-color-scheme="slate"] .md-typeset {
     letter-spacing: -0.005em;
+    font-size: 0.95rem;
+    line-height: 1.7;
 }
 
 [data-md-color-scheme="slate"] .md-typeset h1,
 [data-md-color-scheme="slate"] .md-typeset h2,
-[data-md-color-scheme="slate"] .md-typeset h3 {
-    letter-spacing: -0.02em;
-    font-weight: 600;
+[data-md-color-scheme="slate"] .md-typeset h3,
+[data-md-color-scheme="slate"] .md-typeset h4 {
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    color: var(--memgar-fg);
 }
 
 [data-md-color-scheme="slate"] .md-typeset h1 {
-    font-size: 2.25rem;
-    line-height: 1.15;
+    font-size: 2.5rem;
+    line-height: 1.1;
+    margin-bottom: 1.5rem;
 }
 
 [data-md-color-scheme="slate"] .md-typeset h2 {
-    font-size: 1.5rem;
+    font-size: 1.625rem;
     margin-top: 3rem;
     padding-top: 2rem;
     border-top: 1px solid var(--memgar-border);
 }
 
-/* Header — flat, minimal, glass */
+[data-md-color-scheme="slate"] .md-typeset h3 {
+    font-size: 1.25rem;
+    margin-top: 2rem;
+}
+
+/* Header — flat, glass */
 [data-md-color-scheme="slate"] .md-header {
-    background: rgba(10, 10, 10, 0.7);
-    backdrop-filter: saturate(150%) blur(20px);
-    -webkit-backdrop-filter: saturate(150%) blur(20px);
+    background: rgba(13, 12, 16, 0.75);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
     border-bottom: 1px solid var(--memgar-border);
     box-shadow: none;
 }
 
 [data-md-color-scheme="slate"] .md-header__title {
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    font-size: 1.1rem;
 }
 
 [data-md-color-scheme="slate"] .md-tabs {
@@ -111,11 +157,12 @@
     color: var(--memgar-fg-muted);
     opacity: 1;
     font-weight: 500;
+    font-size: 0.875rem;
 }
 
 [data-md-color-scheme="slate"] .md-tabs__link--active,
 [data-md-color-scheme="slate"] .md-tabs__link:hover {
-    color: var(--memgar-fg);
+    color: var(--memgar-accent-hover);
 }
 
 [data-md-color-scheme="slate"] .md-nav__link {
@@ -134,11 +181,24 @@
     border-top: 1px solid var(--memgar-border);
 }
 
+/* Search */
+[data-md-color-scheme="slate"] .md-search__form {
+    background: var(--memgar-bg-elevated);
+    border: 1px solid var(--memgar-border);
+    border-radius: 8px;
+}
+
+[data-md-color-scheme="slate"] .md-search__form:hover,
+[data-md-color-scheme="slate"] .md-search__form:focus-within {
+    border-color: var(--memgar-accent);
+    background: var(--memgar-bg-card);
+}
+
 /* ─── Hero ────────────────────────────────────────────────────────────── */
 
 .memgar-hero {
-    padding: 6rem 0 3rem;
-    text-align: left;
+    padding: 7rem 0 4rem;
+    text-align: center;
     position: relative;
     overflow: hidden;
 }
@@ -146,52 +206,73 @@
 .memgar-hero::before {
     content: "";
     position: absolute;
-    top: -200px;
-    left: -100px;
-    width: 500px;
-    height: 500px;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1000px;
+    height: 600px;
     background: radial-gradient(
-        circle,
-        rgba(94, 106, 210, 0.08) 0%,
-        transparent 70%
+        ellipse,
+        rgba(168, 85, 247, 0.15) 0%,
+        transparent 50%
     );
     pointer-events: none;
+    z-index: 0;
 }
 
-[data-md-color-scheme="slate"] .memgar-hero::before {
+[data-md-color-scheme="default"] .memgar-hero::before {
     background: radial-gradient(
-        circle,
-        rgba(139, 149, 232, 0.12) 0%,
-        transparent 70%
+        ellipse,
+        rgba(124, 58, 237, 0.08) 0%,
+        transparent 50%
     );
+}
+
+.memgar-hero > * {
+    position: relative;
+    z-index: 1;
 }
 
 .memgar-hero h1 {
-    font-size: clamp(2.5rem, 5vw, 3.5rem) !important;
-    line-height: 1.05 !important;
-    font-weight: 600 !important;
-    letter-spacing: -0.03em !important;
+    font-size: clamp(2.75rem, 6vw, 4.5rem) !important;
+    line-height: 1.02 !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.035em !important;
     margin-top: 0 !important;
-    margin-bottom: 1rem !important;
-    color: var(--memgar-fg);
-    max-width: 800px;
+    margin-bottom: 1.5rem !important;
+    max-width: 900px;
+    margin-left: auto !important;
+    margin-right: auto !important;
 }
 
 .memgar-hero h1::after {
     content: none;
 }
 
+/* Gradient text accent on a span inside the H1 (use <em> in markdown) */
+.memgar-hero h1 em,
+.memgar-gradient {
+    background: var(--memgar-accent-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    font-style: normal;
+}
+
 .memgar-hero p {
-    font-size: 1.0625rem;
+    font-size: 1.1875rem;
     color: var(--memgar-fg-muted);
-    max-width: 640px;
-    line-height: 1.6;
-    margin-bottom: 2rem;
+    max-width: 680px;
+    line-height: 1.55;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    margin-bottom: 2.5rem;
 }
 
 .memgar-hero strong {
     color: var(--memgar-fg);
-    font-weight: 500;
+    font-weight: 600;
 }
 
 /* Pill row above headline */
@@ -199,13 +280,13 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.25rem 0.75rem;
+    padding: 0.375rem 0.875rem;
     border: 1px solid var(--memgar-border-strong);
     border-radius: 100px;
     font-size: 0.8125rem;
     font-weight: 500;
     color: var(--memgar-fg-muted);
-    margin-bottom: 1.5rem;
+    margin-bottom: 2rem;
     background: var(--memgar-bg-elevated);
 }
 
@@ -215,41 +296,53 @@
     height: 6px;
     border-radius: 50%;
     background: var(--memgar-accent);
-    box-shadow: 0 0 8px var(--memgar-accent);
+    box-shadow: 0 0 12px var(--memgar-accent);
+    animation: memgar-pulse 2s ease-in-out infinite;
 }
 
-/* Buttons */
+@keyframes memgar-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Buttons — solid filled violet (primary) + ghost (secondary) */
 .memgar-hero .md-button,
 .memgar-cta .md-button {
     border: 1px solid var(--memgar-border-strong);
     background: transparent;
     color: var(--memgar-fg) !important;
-    font-weight: 500;
-    padding: 0.625rem 1.25rem;
-    border-radius: 6px;
-    transition: all 0.15s ease;
+    font-weight: 600;
+    padding: 0.75rem 1.5rem;
+    border-radius: 8px;
+    transition: all 0.2s ease;
     box-shadow: none;
     text-transform: none;
     letter-spacing: 0;
+    font-size: 0.9375rem;
 }
 
 .memgar-hero .md-button:hover,
 .memgar-cta .md-button:hover {
     background: var(--memgar-bg-elevated);
-    border-color: var(--memgar-fg-muted);
+    border-color: var(--memgar-accent);
+    color: var(--memgar-accent-hover) !important;
 }
 
 .memgar-hero .md-button--primary,
 .memgar-cta .md-button--primary {
-    background: var(--memgar-fg);
-    color: var(--memgar-bg) !important;
-    border-color: var(--memgar-fg);
+    background: var(--memgar-accent);
+    color: #ffffff !important;
+    border-color: var(--memgar-accent);
+    box-shadow: 0 4px 24px var(--memgar-accent-glow);
 }
 
 .memgar-hero .md-button--primary:hover,
 .memgar-cta .md-button--primary:hover {
-    background: var(--memgar-fg-muted);
-    color: var(--memgar-bg) !important;
+    background: var(--memgar-accent-hover);
+    color: #ffffff !important;
+    border-color: var(--memgar-accent-hover);
+    box-shadow: 0 6px 32px var(--memgar-accent-glow);
+    transform: translateY(-1px);
 }
 
 /* ─── Stats strip ─────────────────────────────────────────────────────── */
@@ -258,15 +351,23 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 0;
-    margin: 3rem 0;
-    border-top: 1px solid var(--memgar-border);
-    border-bottom: 1px solid var(--memgar-border);
+    margin: 4rem auto;
+    border: 1px solid var(--memgar-border);
+    border-radius: 12px;
+    background: var(--memgar-bg-card);
+    overflow: hidden;
+    max-width: 900px;
 }
 
 .memgar-stat {
-    padding: 1.5rem;
+    padding: 2rem 1.5rem;
     border-right: 1px solid var(--memgar-border);
-    text-align: left;
+    text-align: center;
+    transition: background 0.2s ease;
+}
+
+.memgar-stat:hover {
+    background: var(--memgar-bg-elevated);
 }
 
 .memgar-stat:last-child {
@@ -279,11 +380,15 @@
 
 .memgar-stat strong {
     display: block;
-    font-size: 1.875rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
+    font-size: 2.25rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
     line-height: 1;
-    color: var(--memgar-fg);
+    background: var(--memgar-accent-text);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
     font-feature-settings: "tnum", "lnum";
 }
 
@@ -291,10 +396,10 @@
     display: block;
     font-size: 0.8125rem;
     color: var(--memgar-fg-muted);
-    margin-top: 0.5rem;
+    margin-top: 0.75rem;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 500;
+    letter-spacing: 0.06em;
+    font-weight: 600;
 }
 
 /* ─── Feature cards ───────────────────────────────────────────────────── */
@@ -302,34 +407,60 @@
 .grid.cards > ul {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
+    gap: 1.25rem;
     padding: 0;
     list-style: none;
+    margin: 2rem 0;
 }
 
 .grid.cards > ul > li {
     border: 1px solid var(--memgar-border) !important;
-    background: transparent !important;
-    border-radius: 8px !important;
-    padding: 1.25rem !important;
-    transition: border-color 0.15s ease, background 0.15s ease !important;
+    background: var(--memgar-bg-card) !important;
+    border-radius: 12px !important;
+    padding: 1.5rem !important;
+    transition: all 0.2s ease !important;
     box-shadow: none !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.grid.cards > ul > li::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--memgar-accent),
+        transparent
+    );
+    opacity: 0;
+    transition: opacity 0.2s ease;
 }
 
 .grid.cards > ul > li:hover {
-    border-color: var(--memgar-border-strong) !important;
+    border-color: var(--memgar-accent) !important;
     background: var(--memgar-bg-elevated) !important;
-    transform: none !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 32px var(--memgar-accent-glow) !important;
+}
+
+.grid.cards > ul > li:hover::before {
+    opacity: 1;
 }
 
 .grid.cards > ul > li > h2,
 .grid.cards > ul > li > h3,
 .grid.cards strong {
     color: var(--memgar-fg) !important;
-    font-size: 1rem !important;
-    font-weight: 600 !important;
+    font-size: 1.0625rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.015em !important;
     margin-top: 0 !important;
-    margin-bottom: 0.5rem !important;
+    margin-bottom: 0.625rem !important;
     border: none !important;
     padding: 0 !important;
 }
@@ -338,13 +469,16 @@
     color: var(--memgar-fg-muted);
     font-size: 0.9375rem;
     line-height: 1.55;
+    margin: 0;
 }
 
 /* ─── Tables ──────────────────────────────────────────────────────────── */
 
 [data-md-color-scheme="slate"] .md-typeset table:not([class]) {
     border: 1px solid var(--memgar-border);
-    background: transparent;
+    background: var(--memgar-bg-card);
+    border-radius: 8px;
+    overflow: hidden;
     font-size: 0.9rem;
 }
 
@@ -364,25 +498,26 @@
 /* ─── Code ────────────────────────────────────────────────────────────── */
 
 [data-md-color-scheme="slate"] .md-typeset code {
-    background: rgba(255, 255, 255, 0.06);
-    color: #d4d4d4;
-    padding: 0.125rem 0.375rem;
+    background: rgba(168, 85, 247, 0.1);
+    color: #e9d5ff;
+    padding: 0.125rem 0.4rem;
     border-radius: 4px;
     font-size: 0.875em;
-    border: 1px solid var(--memgar-border);
+    border: 1px solid rgba(168, 85, 247, 0.15);
 }
 
 [data-md-color-scheme="slate"] .md-typeset pre > code {
     background: transparent;
     border: none;
     padding: 0;
+    color: #f3f1f7;
 }
 
 [data-md-color-scheme="slate"] .md-typeset .highlight,
 [data-md-color-scheme="slate"] .md-typeset pre {
-    background: #0e0e0e;
+    background: #15131c;
     border: 1px solid var(--memgar-border);
-    border-radius: 8px;
+    border-radius: 10px;
 }
 
 [data-md-color-scheme="slate"] .highlight .filename {
@@ -398,8 +533,8 @@
 [data-md-color-scheme="slate"] .md-typeset .admonition,
 [data-md-color-scheme="slate"] .md-typeset details {
     border: 1px solid var(--memgar-border);
-    border-radius: 8px;
-    background: var(--memgar-bg-elevated);
+    border-radius: 10px;
+    background: var(--memgar-bg-card);
     box-shadow: none;
 }
 
@@ -412,83 +547,92 @@
 
 /* Tag chips */
 [data-md-color-scheme="slate"] .md-tag {
-    background: var(--memgar-bg-elevated);
-    border: 1px solid var(--memgar-border);
-    color: var(--memgar-fg-muted);
+    background: rgba(168, 85, 247, 0.1);
+    border: 1px solid rgba(168, 85, 247, 0.2);
+    color: #d8b4fe;
     border-radius: 100px;
     font-size: 0.8125rem;
     font-weight: 500;
-}
-
-/* Search */
-[data-md-color-scheme="slate"] .md-search__form {
-    background: var(--memgar-bg-elevated);
-    border: 1px solid var(--memgar-border);
-    border-radius: 8px;
-}
-
-[data-md-color-scheme="slate"] .md-search__form:hover,
-[data-md-color-scheme="slate"] .md-search__form:focus-within {
-    border-color: var(--memgar-border-strong);
 }
 
 /* ─── Section eyebrow text ────────────────────────────────────────────── */
 
 .memgar-section-eyebrow {
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
     font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--memgar-fg-muted);
-    margin-bottom: 0.5rem;
+    font-weight: 700;
+    color: var(--memgar-accent);
+    margin-bottom: 0.75rem;
+    text-align: center;
 }
 
-/* CTA strip at bottom */
+/* CTA strip at bottom — gradient surface */
 .memgar-cta {
-    margin: 4rem 0 2rem;
-    padding: 3rem;
+    margin: 5rem 0 2rem;
+    padding: 4rem 3rem;
     border: 1px solid var(--memgar-border);
-    border-radius: 12px;
+    border-radius: 16px;
     text-align: center;
     background:
-        radial-gradient(circle at top, rgba(139, 149, 232, 0.06), transparent 60%);
+        radial-gradient(circle at 30% 30%, rgba(168, 85, 247, 0.12), transparent 50%),
+        radial-gradient(circle at 70% 70%, rgba(124, 58, 237, 0.08), transparent 50%),
+        var(--memgar-bg-card);
+    position: relative;
+    overflow: hidden;
 }
 
 [data-md-color-scheme="default"] .memgar-cta {
     background:
-        radial-gradient(circle at top, rgba(94, 106, 210, 0.04), transparent 60%);
+        radial-gradient(circle at 30% 30%, rgba(124, 58, 237, 0.06), transparent 50%),
+        radial-gradient(circle at 70% 70%, rgba(168, 85, 247, 0.04), transparent 50%),
+        var(--memgar-bg-card);
 }
 
 .memgar-cta h2 {
     border: none !important;
     margin-top: 0 !important;
     padding-top: 0 !important;
-    font-size: 1.875rem !important;
+    font-size: 2rem !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.025em !important;
+}
+
+.memgar-cta p {
+    color: var(--memgar-fg-muted);
+    font-size: 1.0625rem;
+    max-width: 560px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 2rem;
 }
 
 /* Honest-pitch micro-text */
 .memgar-honest {
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    font-size: 0.8125rem;
-    color: var(--memgar-fg-dim);
-    border-left: 2px solid var(--memgar-border-strong);
-    background: var(--memgar-bg-elevated);
-    border-radius: 0 4px 4px 0;
+    margin: 2rem auto;
+    padding: 1.25rem 1.5rem;
+    font-size: 0.875rem;
+    color: var(--memgar-fg-muted);
+    border: 1px solid var(--memgar-border);
+    background: var(--memgar-bg-card);
+    border-radius: 10px;
     max-width: 720px;
+    text-align: left;
+    line-height: 1.6;
 }
 
 .memgar-honest strong {
-    color: var(--memgar-fg-muted);
+    color: var(--memgar-fg);
 }
 
-/* Mobile */
+/* ─── Mobile ──────────────────────────────────────────────────────────── */
+
 @media (max-width: 768px) {
     .memgar-hero {
-        padding: 3rem 0 2rem;
+        padding: 4rem 0 2rem;
     }
     .memgar-hero h1 {
-        font-size: 2rem !important;
+        font-size: 2.25rem !important;
     }
     .memgar-stats {
         grid-template-columns: repeat(2, 1fr);
@@ -496,5 +640,17 @@
     .memgar-stat {
         border-right: none;
         border-bottom: 1px solid var(--memgar-border);
+    }
+    .memgar-stat:nth-child(2n) {
+        border-right: none;
+    }
+    .memgar-stat:nth-last-child(-n+2) {
+        border-bottom: none;
+    }
+    .memgar-cta {
+        padding: 2.5rem 1.5rem;
+    }
+    .memgar-cta h2 {
+        font-size: 1.5rem !important;
     }
 }
