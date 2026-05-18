@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from memgar import Analyzer, MemoryEntry
 from memgar.models import Decision
+from memgar.tool_use_guard import ToolDecision, ToolUseGuard
 
 from .policy import GatewayPolicy, PolicyDecision
 
@@ -171,6 +172,93 @@ def _set_path(payload: Dict[str, Any], path: Path, value: str) -> bool:
         return False
 
 
+def _coerce_tool_arguments(raw: Any) -> Dict[str, Any]:
+    """Normalize tool/function arguments to a mapping for ToolUseGuard."""
+
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except Exception:
+            return {"_raw": raw}
+        if isinstance(decoded, dict):
+            return decoded
+        return {"_args": decoded}
+    if raw is None:
+        return {}
+    return {"_args": raw}
+
+
+def _extract_tool_calls(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract tool/function call envelopes that carry executable arguments."""
+
+    out: List[Dict[str, Any]] = []
+    if not isinstance(payload, dict):
+        return out
+
+    def _append_call(name: Any, arguments: Any, path: Path) -> None:
+        if not isinstance(name, str) or not name.strip():
+            return
+        out.append({
+            "name": name.strip(),
+            "arguments": _coerce_tool_arguments(arguments),
+            "path": list(path),
+        })
+
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for msg_idx, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                continue
+
+            function_call = msg.get("function_call")
+            if isinstance(function_call, dict):
+                _append_call(
+                    function_call.get("name"),
+                    function_call.get("arguments"),
+                    ["messages", msg_idx, "function_call"],
+                )
+
+            tool_calls = msg.get("tool_calls")
+            if isinstance(tool_calls, list):
+                for call_idx, call in enumerate(tool_calls):
+                    if not isinstance(call, dict):
+                        continue
+                    fn = call.get("function")
+                    if isinstance(fn, dict):
+                        _append_call(
+                            fn.get("name"),
+                            fn.get("arguments"),
+                            ["messages", msg_idx, "tool_calls", call_idx, "function"],
+                        )
+
+    top_tool_calls = payload.get("tool_calls")
+    if isinstance(top_tool_calls, list):
+        for idx, call in enumerate(top_tool_calls):
+            if not isinstance(call, dict):
+                continue
+            fn = call.get("function")
+            if isinstance(fn, dict):
+                _append_call(
+                    fn.get("name"),
+                    fn.get("arguments"),
+                    ["tool_calls", idx, "function"],
+                )
+
+    # Responses-style envelopes may carry function calls under input blocks.
+    input_value = payload.get("input")
+    if isinstance(input_value, list):
+        for idx, item in enumerate(input_value):
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "")).lower()
+            if item_type in {"function_call", "tool_call"}:
+                _append_call(item.get("name"), item.get("arguments"), ["input", idx])
+
+    return out
+
+
 def _sanitize_text(content: str) -> Dict[str, Any]:
     try:
         from memgar.sanitizer import InstructionSanitizer, SanitizeAction
@@ -224,6 +312,74 @@ class Gateway:
     # Inbound scanning
     # -----------------------------------------------------------------
 
+    def _evaluate_tool_firewall(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        ip = self.policy.input
+        if not (ip.enabled and ip.enforce_tool_argument_firewall and ip.scan_tool_arguments):
+            return None
+
+        calls = _extract_tool_calls(payload)
+        if not calls:
+            return None
+
+        allowlist_hosts = self.policy.resolved_tool_allowlist_hosts()
+        if not allowlist_hosts:
+            if self.policy.fail_open:
+                logger.warning("gateway: tool argument firewall allowlist unresolved; fail_open=True")
+                return None
+            return {
+                "decision": PolicyDecision.BLOCK,
+                "risk": 100,
+                "reason": "tool argument firewall has no resolved allowlist hosts",
+                "payload": payload,
+            }
+
+        tool_guard = ToolUseGuard(allowlist_hosts=allowlist_hosts)
+
+        for call in calls:
+            tool_name = str(call.get("name", ""))
+            tool_args = call.get("arguments") or {}
+            call_path = call.get("path") or []
+            path_str = ".".join(map(str, call_path)) if call_path else "tool_call"
+
+            try:
+                check = tool_guard.check_call(tool_name, tool_args)
+            except Exception as exc:
+                logger.warning("gateway: ToolUseGuard.check_call() failed: %s", exc)
+                if self.policy.fail_open:
+                    continue
+                return {
+                    "decision": PolicyDecision.BLOCK,
+                    "risk": 100,
+                    "reason": f"tool firewall error at {path_str}: {exc}",
+                    "payload": payload,
+                }
+
+            if check.decision == ToolDecision.ALLOW:
+                continue
+
+            findings = sorted({item.technique for item in check.findings})
+            reason = check.rationale or f"tool firewall denied call '{tool_name}'"
+            if findings:
+                reason = f"{reason}; findings={','.join(findings)}"
+            reason = f"{reason}; path={path_str}"
+
+            if check.decision == ToolDecision.REQUIRE_CONFIRMATION:
+                return {
+                    "decision": PolicyDecision.BLOCK,
+                    "risk": max(int(check.risk_score), 70),
+                    "reason": reason,
+                    "payload": payload,
+                }
+
+            return {
+                "decision": PolicyDecision.BLOCK,
+                "risk": int(check.risk_score),
+                "reason": reason,
+                "payload": payload,
+            }
+
+        return None
+
     def scan_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         ip = self.policy.input
         if not ip.enabled:
@@ -238,6 +394,10 @@ class Gateway:
                     "reason": f"model '{model}' is on the gateway blocklist",
                     "payload": payload,
                 }
+
+        firewall_verdict = self._evaluate_tool_firewall(payload)
+        if firewall_verdict is not None:
+            return firewall_verdict
 
         max_risk = 0
         worst_explanation = ""
@@ -538,12 +698,14 @@ def create_app(
             "upstream_base_url": gateway.policy.upstream_base_url,
             "allowed_upstream_hosts": gateway.policy.allowed_upstream_hosts,
             "allow_private_upstreams": gateway.policy.allow_private_upstreams,
+            "tool_allowlist_hosts": gateway.policy.resolved_tool_allowlist_hosts(),
             "input": {
                 "enabled": gateway.policy.input.enabled,
                 "block_risk_score": gateway.policy.input.block_risk_score,
                 "sanitize_risk_score": gateway.policy.input.sanitize_risk_score,
                 "scan_all_messages": gateway.policy.input.scan_all_messages,
                 "scan_tool_arguments": gateway.policy.input.scan_tool_arguments,
+                "enforce_tool_argument_firewall": gateway.policy.input.enforce_tool_argument_firewall,
                 "blocked_models": gateway.policy.input.blocked_models,
             },
             "output": {
